@@ -1,0 +1,8 @@
+streamlit
+pandas
+scikit-learn
+numpy
+matplotlib
+tqdm
+seaborn
+# Thêm các thư viện khác (mlxtend cho Apriori)
