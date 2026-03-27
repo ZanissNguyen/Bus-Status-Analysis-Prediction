@@ -178,3 +178,4 @@ data/bus_gps/*.json
 data/*.json
 *.csv
 .agents
+*.pdf
