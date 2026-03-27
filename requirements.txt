@@ -1,0 +1,12 @@
+streamlit
+pandas
+scikit-learn
+numpy
+matplotlib
+tqdm
+seaborn
+mlxtend
+DrissionPage
+prefixspan
+ipykernel
+pyarrow
