@@ -173,6 +173,7 @@ poetry.toml
 # LSP config files
 pyrightconfig.json
 data/*/*.json
+data/*/*.parquet
 data/bus_gps/*.json
 data/*.json
 *.csv
