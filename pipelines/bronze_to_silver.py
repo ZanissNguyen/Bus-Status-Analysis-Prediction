@@ -4,13 +4,10 @@ from tqdm import tqdm
 import math
 from datetime import datetime
 import os
+from sklearn.neighbors import BallTree
+import numpy as np
 
 # Global var
-DATASET_PATH = "./data/bus_gps/"
-START_FILE = 104
-END_FILE = 189
-SCALE = 0.3
-FILE_NAME = "sub_raw_"
 
 # utils
 def distance_calc(a, b):
@@ -31,31 +28,6 @@ def distance_calc(a, b):
 
 def unix_to_datetime(unix_time):
         return datetime.fromtimestamp(unix_time).strftime("%d-%m-%Y %H:%M:%S")
-
-# get_data
-def get_waypoints(file_path, frac):
-    """_summary_
-
-    Args:
-        file_path (string): path of file that contains waypoints
-        frac (float): percent of bin 
-
-    Returns:
-        dataframe: _description_
-    """
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        data = [item["msgBusWayPoint"] for item in data]
-        df = pd.DataFrame(data)
-        
-        df["bin"] = pd.cut(df["datetime"], bins = 8)
-
-        df = (
-            df.groupby("bin", group_keys=False, observed=False)
-              .apply(lambda x: x.sample(frac=frac), include_groups=False)
-        )
-        
-        return df
     
 def get_bus_station_data():
     with open("./data/1_bronze/bus_station.json", "r", encoding="utf-8") as f:
@@ -70,63 +42,70 @@ def get_bus_station_data():
             station_data.append(station)
 
     station_df = pd.DataFrame(station_data)
-    print(station_df.head())
-    print(len(station_df))
-
     return station_df
 
-# save data
-def save_get_bronze_data():
-    dfs = []
-    for i in tqdm(range(START_FILE, END_FILE)): # all 7 day filea
-        file_name = FILE_NAME+str(i)
-        file_path = DATASET_PATH+file_name+".json"
-        dfs.append(get_waypoints(file_path, SCALE))
-
-
-    df = pd.concat(dfs, ignore_index=True)
-    print(len(df))
-    print(df.head())
-    print(df.tail())
-    
-    if not os.path.exists("./data/1_bronze/data_raw.json"):
-        df.to_json("./data/1_bronze/data_raw.json", orient="records", force_ascii=False, indent=4)
+def get_gps_bronze_data():
+    df = pd.read_parquet("./data/1_bronze/data_raw.parquet", engine="pyarrow")
     return df
 
 # Preprocess function
 def clean_bus_gps_data(df):
     
     df = df.drop(["heading", "aircon", "working", "ignition"], axis = 1)
-    df.head(5)
-
+    
     #Apply convert time to every bus's status samples
     df['realtime'] = df['datetime'].apply(unix_to_datetime)
 
     ###Sort df with vehicle and datetime features
     df = df.sort_values(['vehicle', 'datetime'])
 
-    ###Drop duplicate sample (drop samples which have the same value of vehicle, x, y to others)
-    df = df.drop_duplicates(subset=['vehicle', 'x', 'y'])
+    ###Drop duplicate sample
+    df = df.drop_duplicates(subset=['vehicle', 'datetime'])
 
-    print(len(df))
+    print(f"Số dòng sau khi làm sạch cơ bản: {len(df)}")
     print(df.head())
+
     return df
     
 def clean_bus_station_data(df):
-
     df.rename(columns={'Lat': 'y', 'Lng': 'x'}, inplace=True)
     return df
 
-def main():
-    df = save_get_bronze_data()
-    station_df = get_bus_station_data()
+def map_bus_to_station(df, station_df):
+    """
+    Mapping mỗi điểm GPS với Trạm gần nhất bằng BallTree.
+    Lớp SILVER: Giữ LẠI TOÀN BỘ DỮ LIỆU, CHỈ BỔ SUNG CỘT (Enrichment).
+    """
 
+    station_coords = np.radians(station_df[['y','x']].values)
+    status_coords = np.radians(df[['y','x']].values)
+
+    tree = BallTree(station_coords, metric='haversine')
+
+    distances, indices = tree.query(status_coords, k=1)
+
+    distances_m = distances.flatten() * 6371000
+    nearest_station = station_df.iloc[indices.flatten()]['Name'].values
+
+    df['current station'] = nearest_station
+    df['station distance'] = distances_m
+
+    print(f"Số dòng sau khi Mapping (Silver Layer): {len(df)}")
+    return df
+
+def main():
+    print("Đang đọc dữ liệu từ bronze...")
+    df = get_gps_bronze_data()
+    station_df = get_bus_station_data()
+    print("Bắt đầu làm sạch dữ liệu...")
     df = clean_bus_gps_data(df)
     station_df = clean_bus_station_data(station_df)
-
-
-    df.to_json("./data/2_silver/bus_gps_data.json", orient="records", force_ascii=False, indent=4)
+    print("Bắt đầu Mapping...")
+    silver_df = map_bus_to_station(df, station_df)
+    print("Bắt đầu lưu dữ liệu...")
+    silver_df.to_parquet("./data/2_silver/bus_gps_data.parquet", engine="pyarrow", index=False)
     station_df.to_json("./data/2_silver/bus_station_data.json", orient="records", force_ascii=False, indent=4)
+    print("Đã lưu file silver thành công!")
 
 if __name__ == "__main__":
     main()
