@@ -48,7 +48,10 @@ def get_weekend(rt):
 def get_hour(rt):
     fmt = "%d-%m-%Y %H:%M:%S"
     dt = datetime.strptime(rt, fmt)
-    return dt.hour
+    hour = dt.hour
+    minute = dt.minute
+    hour_float = dt.hour + minute / 60.0
+    return hour_float
 
 ###Function that returns the minute from reallife time's format
 def get_minute(rt):
@@ -66,122 +69,107 @@ def is_same_day(rt1, rt2):
 # Get data
 
 def get_silver_data():
-    with open(SILVER_PATH+"bus_gps_data.json", "r", encoding="utf-8") as f:
-        gps_data = json.load(f)
-        
-    with open(SILVER_PATH+"bus_station_data.json", "r", encoding="utf-8") as f:
-        station_data = json.load(f)
-        
+    print("1. Đang đọc dữ liệu Silver...")
+    # Tối ưu: Đọc trực tiếp bằng hàm tích hợp của Pandas cực nhanh
+    df = pd.read_parquet(SILVER_PATH+"bus_gps_data.parquet", engine="pyarrow")
+    return df
+
+def prepare_ml_data(silver_df):
+    print("2. Đang nén Quỹ đạo (Business Logic dành riêng cho ML)...")
     
-    gps_df = pd.DataFrame(gps_data)
-    station_df = pd.DataFrame(station_data)
-    return gps_df, station_df
+    # 2.1. Lọc các điểm thực sự nằm trong trạm (cách trạm <= 20m)
+    df_ml = silver_df[silver_df['station distance'] <= 20].copy()
+    
+    # 2.2. Nén các điểm lặp liên tiếp tại cùng 1 trạm (chỉ giữ điểm gần nhất)
+    is_new_block = (df_ml['current station'] != df_ml['current station'].shift(1)) | \
+                   (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
 
-def map_bus_to_station(df, station_df):
-    print("Length before:", len(df))
+    df_ml['block_id'] = is_new_block.cumsum()
+    idx_min_distance = df_ml.groupby('block_id')['station distance'].idxmin()
 
-    station_coords = np.radians(
-        station_df[['y','x']].values
-    )
+    # Dataframe này giờ chỉ chứa các điểm đón/trả khách (Trạm)
+    df_compressed = df_ml.loc[idx_min_distance].reset_index(drop=True)
+    df_compressed = df_compressed.sort_values(by=['vehicle', 'datetime'])
 
-    status_coords = np.radians(
-        df[['y','x']].values
-    )
+    print(f"   -> Số điểm dừng đỗ tại trạm: {len(df_compressed)}")
 
-    tree = BallTree(station_coords, metric='haversine')
+    print("3. Đang tạo các Cặp Trạm (Start -> End) bằng Vectorization...")
+    # TỐI ƯU PANDAS: Dùng .shift(-1) kéo dòng tiếp theo lên để tính toán, thay vì dùng vòng lặp for
+    df_compressed['end station'] = df_compressed.groupby('vehicle')['current station'].shift(-1)
+    df_compressed['end_time_unix'] = df_compressed.groupby('vehicle')['datetime'].shift(-1)
+    df_compressed['end_x'] = df_compressed.groupby('vehicle')['x'].shift(-1)
+    df_compressed['end_y'] = df_compressed.groupby('vehicle')['y'].shift(-1)
 
-    distances, indices = tree.query(status_coords, k=1)
+    # Xóa các dòng cuối cùng của mỗi xe (vì nó không có trạm tiếp theo)
+    df_compressed = df_compressed.dropna(subset=['end station'])
+    
+    # Loại bỏ các cặp Trạm bị trùng (Ví dụ xe dừng lại 2 lần ở 1 bến)
+    df_compressed = df_compressed[df_compressed['current station'] != df_compressed['end station']]
 
-    distances_m = distances.flatten() * 6371000
-    nearest_station = station_df.iloc[indices.flatten()]['Name'].values
+    print("4. Đang tính Khoảng cách và Thời gian...")
+    # Tính thời gian (giây)
+    df_compressed['duration (s)'] = df_compressed['end_time_unix'] - df_compressed['datetime']
 
-    mask = distances_m < 20
+    # TỐI ƯU CÔNG THỨC HAVERSINE BẰNG NUMPY (Chạy đồng loạt 1 lúc cho tất cả các dòng)
+    lat1, lng1 = np.radians(df_compressed['y']), np.radians(df_compressed['x'])
+    lat2, lng2 = np.radians(df_compressed['end_y']), np.radians(df_compressed['end_x'])
+    
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    
+    a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlng/2.0)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    
+    df_compressed['distance (m)'] = 6371000 * c
+    
+    # Tránh chia cho 0 nếu thời gian bằng 0
+    df_compressed['duration (s)'] = df_compressed['duration (s)'].replace(0, np.nan)
+    df_compressed['speed'] = (df_compressed['distance (m)'] / df_compressed['duration (s)']) * 3.6
 
-    df = df.loc[mask].copy()
-    df['current station'] = nearest_station[mask]
-    df['station distance'] = distances_m[mask]
+    print("5. Đang trích xuất Thuộc tính Thời gian (Datetime Features)...")
+    # TỐI ƯU: Sử dụng thuộc tính .dt của Pandas siêu tốc thay vì datetime.strptime
+    start_dt = pd.to_datetime(df_compressed['realtime'], format="%d-%m-%Y %H:%M:%S")
+    end_dt = pd.to_datetime(df_compressed['end_time_unix'], unit='s')
 
-    print("Length after:", len(df))
-    df.head()
+    df_compressed['hour'] = start_dt.dt.hour + (start_dt.dt.minute / 60.0)
+    df_compressed['week day'] = start_dt.dt.dayofweek
 
-    ###Drop samples that "vehicle" and "current station" features have the same values
-    is_new_block = (df['current station'] != df['current station'].shift(1)) | \
-                (df['vehicle'] != df['vehicle'].shift(1))
+    # Kiểm tra cùng ngày (Lọc bỏ các chuyến đi qua đêm)
+    is_same_day = start_dt.dt.date == end_dt.dt.date
 
-    df['block_id'] = is_new_block.cumsum()
+    print("6. Bắt đầu làm sạch cuối cùng (Final Filtering)...")
+    # Áp dụng các bộ lọc
+    df_final = df_compressed[
+        is_same_day & 
+        (df_compressed['distance (m)'] > 100) &  # Giữ logic lọc khoảng cách quá ngắn của bạn
+        (df_compressed['duration (s)'] > 10)     # Lọc các dòng bị lỗi thời gian di chuyển siêu nhanh
+    ].copy()
 
-    idx_min_distance = df.groupby('block_id')['station distance'].idxmin()
-
-    ###Reset the index after dropping
-    df_cleaned = df.loc[idx_min_distance].reset_index(drop=True)
-
-    df_cleaned = df_cleaned.drop(columns=['block_id'])
-
-    print(f"Data size at first: {len(df)}")
-    print(f"Data size after being filted duplicate station data: {len(df_cleaned)}")
-    df_cleaned.head()
-
-    return df_cleaned
-
-def add_features(df):
-    ###Pairing sample with the same value of "value" feature consecutively than save in lst_data variable
-    lst_data = []
-    prev_status = None
-    for i in tqdm(range(len(df))):
-        cur_status = df.iloc[i]
-        if prev_status is not None and prev_status['vehicle'] == cur_status['vehicle']:
-            distance = distance_calc(prev_status, cur_status)
-            d_time = cur_status['datetime'] - prev_status['datetime']
-            speed = speed_calc(distance, d_time)
-            lst_data.append({
-                # old record
-                # "start station": prev_status['current station'],
-                # "end station": cur_status['current station'],
-                # "start time": prev_status['realtime'],
-                # "end time": cur_status['realtime'],
-                # "week day": get_weekday(prev_status['realtime']),
-                # "distance (m)" : distance,
-                # "duration (s)": d_time,
-                # "speed (kmh)": speed 
-                # new record
-                "start time": prev_status['realtime'],
-                "end time": cur_status['realtime'],
-                "start station": prev_status['current station'],
-                "end station": cur_status['current station'],
-                "hour": get_hour(prev_status['realtime']),
-                "minute": get_minute(prev_status['realtime']),
-                "week day": get_weekday(prev_status['realtime']),
-                "week end": get_weekend(prev_status['realtime']),
-                "distance (m)" : distance,
-                "duration (s)": d_time,
-            })
-        prev_status = cur_status
-    main_df = pd.DataFrame(lst_data)
-    main_df.head()
-
-    ###Apply to main_df
-    drop_idx_lst = []
-    for i in tqdm(range(len(main_df))):
-        sample = main_df.iloc[i]
-        if not is_same_day(sample['start time'], sample['end time']):
-            drop_idx_lst.append(i)
-
-    print("Dataset size before being filted by day: ", len(main_df))
-    main_df = main_df.drop(drop_idx_lst, errors='ignore')
-    main_df = main_df[main_df['distance (m)']>100]
-    main_df = main_df.reset_index(drop=True)
-    print("Dataset size after being filted (delete samples which have start time and end time is not at the same day): ", len(main_df))
-    main_df = main_df.drop(["start time", "end time"], axis=1)
-    ###Save main_df in preprocessed_data.json file
-
-    main_df.to_json("./data/3_gold/ml_gold_data.json", orient="records", force_ascii=False, indent=4)
-    # end here!!
+    # Đổi tên cột cho chuẩn
+    df_final = df_final.rename(columns={'current station': 'start station'})
+    
+    # Chỉ giữ lại các cột cần thiết cho Machine Learning
+    final_columns = [
+        'start station', 'end station', 'hour', 'week day', 
+        'distance (m)', 'duration (s)'
+    ]
+    
+    result_df = df_final[final_columns]
+    
+    print(f"Kích thước Dataset cuối cùng: {len(result_df)}")
+    return result_df
 
 def main():
 
-    gps_df, station_df = get_silver_data()
-    df = map_bus_to_station(gps_df, station_df)
-    add_features(df)
+    silver_df = get_silver_data()
+    
+    # 2. Xử lý thành dữ liệu Gold cho ML
+    ml_gold_df = prepare_ml_data(silver_df)
+    
+    # 3. Lưu xuống thư mục Gold
+    ml_gold_df.to_parquet("./data/3_gold/ml_gold_data.parquet", engine="pyarrow", index=False)
+
+    print("Đã lưu file ml_gold_data thành công!")
 
 if __name__ == "__main__":
     main()
