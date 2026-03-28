@@ -141,7 +141,7 @@ def prepare_ml_data(silver_df):
     # Áp dụng các bộ lọc
     df_final = df_compressed[
         is_same_day & 
-        (df_compressed['distance (m)'] > 100) &  # Giữ logic lọc khoảng cách quá ngắn của bạn
+        (df_compressed['distance (m)'] > 100) &  # logic lọc khoảng cách quá ngắn
         (df_compressed['duration (s)'] > 10)     # Lọc các dòng bị lỗi thời gian di chuyển siêu nhanh
     ].copy()
 
