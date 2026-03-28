@@ -10,3 +10,5 @@ DrissionPage
 prefixspan
 ipykernel
 pyarrow
+pandera
+pytest

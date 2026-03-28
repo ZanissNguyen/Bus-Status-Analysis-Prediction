@@ -48,9 +48,9 @@ def save_to_json(data, filepath="./data/1_bronze/bus_station.json"):
         return
         
     # 'w' tự động ghi đè file cũ, không cần os.remove()
-    with open(filename, "w", encoding="utf-8") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"\n[V] Đã lưu thành công {len(data)} tuyến vào {filename}")
+    print(f"\n[V] Đã lưu thành công {len(data)} tuyến vào {filepath}")
 
 # ==========================================
 # 3. LUỒNG ĐIỀU PHỐI (ETL)
