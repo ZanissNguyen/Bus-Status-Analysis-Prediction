@@ -7,7 +7,7 @@ services:
       - "8501:8501"
     volumes:
       # Ánh xạ thư mục hiện tại vào /app trong container. 
-      # Nhờ vậy, bạn sửa code Python ở ngoài thì web tự cập nhật, không cần build lại.
+      # Sửa code Python ở ngoài thì web tự cập nhật, không cần build lại.
       - .:/app
     environment:
       - PYTHONUNBUFFERED=1

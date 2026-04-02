@@ -12,3 +12,11 @@ ipykernel
 pyarrow
 pandera
 pytest
+dataframe_image
+matplotlib
+seaborn
+prefixspan
+folium
+hdbscan
+plotly
+pyyaml
