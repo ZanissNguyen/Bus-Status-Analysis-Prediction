@@ -8,7 +8,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from utils.config_loader import load_config
-from app.utils import *
+from app.helpers import *
 
 data_dir = os.path.join(_PROJECT_ROOT, "data")
 
