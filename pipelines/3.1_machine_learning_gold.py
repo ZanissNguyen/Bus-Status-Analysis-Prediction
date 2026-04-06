@@ -54,7 +54,7 @@ def prepare_ml_data(silver_df):
     
     # 2.2. Nén các điểm lặp liên tiếp tại cùng 1 trạm (chỉ giữ điểm gần nhất)
     is_new_block = (df_ml['current_station'] != df_ml['current_station'].shift(1)) | \
-                   (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
+                    (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
 
     df_ml['block_id'] = is_new_block.cumsum()
     idx_min_distance = df_ml.groupby('block_id')['station_distance'].idxmin()
@@ -116,21 +116,39 @@ def prepare_ml_data(silver_df):
     # Áp dụng các bộ lọc
     df_final = df_compressed[
         is_same_day & 
-        (df_compressed['distance (m)'] > 100) &  # logic lọc khoảng cách quá ngắn
-        (df_compressed['duration (s)'] > 10)     # Lọc các dòng bị lỗi thời gian di chuyển siêu nhanh
+        (df_compressed['distance (m)'] > 100) & (df_compressed['distance (m)'] <= 3000) &
+        (df_compressed['duration (s)'] > 10) & (df_compressed['duration (s)'] <= 1800)
     ].copy()
 
     # Đổi tên cột cho chuẩn
     df_final = df_final.rename(columns={'current_station': 'start station'})
-    
-    # Chỉ giữ lại các cột cần thiết cho Machine Learning
+
+    # ==== Bổ sung các bước preprocessing giống notebook ====
+    # 1. Tạo cột route
+    df_final["route"] = df_final["start station"] + "_" + df_final["end station"]
+
+    # 2. Tính route_avg_duration cho từng route
+    route_mean = (
+        df_final.groupby("route")["duration (s)"]
+        .mean()
+        .rename("route_avg_duration")
+    )
+    df_final = df_final.merge(route_mean, on="route")
+
+    # 3. Tạo cột weekend
+    df_final["weekend"] = (df_final["week day"] >= 5).astype(int)
+
+    # 4. Tạo cột hour_sin, hour_cos
+    df_final["hour_sin"] = np.sin(2 * np.pi * df_final["hour"] / 24)
+    df_final["hour_cos"] = np.cos(2 * np.pi * df_final["hour"] / 24)
+
+    # 5. Loại bỏ các cột không cần thiết
     final_columns = [
-        'start station', 'end station', 'hour', 'week day', 
-        'distance (m)', 'duration (s)'
+        'start station', 'end station', 'distance (m)', 'duration (s)',
+        'route_avg_duration', 'weekend', 'hour_sin', 'hour_cos'
     ]
-    
     result_df = df_final[final_columns]
-    
+
     logger.info(f"Kích thước Dataset cuối cùng: {len(result_df)}")
     return result_df
 
