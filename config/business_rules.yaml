@@ -1,0 +1,143 @@
+# ==============================================================================
+# BUS TRANSIT OPERATIONAL BUSINESS RULES
+# ==============================================================================
+# Single Source of Truth (SSOT) for all operational thresholds.
+# Any pipeline, dashboard, or ML module MUST read from this file.
+# Last updated: 2026-04-02
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. SPATIAL THRESHOLDS (Station Proximity)
+# ------------------------------------------------------------------------------
+# Radius (meters) to consider a bus has "arrived at" a station.
+# CRITICAL: This value MUST be used consistently across ALL modules.
+#   - data_mining_gold.py  (preprocess_data)
+#   - machine_learning_gold.py (prepare_ml_data)
+#   - bunching.py (analyze_bunching_and_dwell_time)
+#   - kmeans_profiling.py (violation detection)
+#   - ar.py (violation detection)
+#   - app/main.py (driver KPI)
+station_distance_max_m: 50
+
+# Maximum distance (meters) from any station to keep raw GPS points.
+# Silver-layer filtering: points farther than this are discarded as noise.
+silver_layer_max_distance_m: 1000
+
+# Distance threshold (meters) for black-spot / jam detection.
+# Points with station_distance > this AND low speed are considered "stuck in traffic"
+# (as opposed to being stopped at a station).
+jam_far_from_station_m: 50
+
+# Upper event-radius (meters) for association-rule mining.
+# Only door-open events within this radius are fed into FP-Growth.
+ar_event_radius_m: 100
+
+# ------------------------------------------------------------------------------
+# 2. TEMPORAL THRESHOLDS (Headway, Dwell, Gaps)
+# ------------------------------------------------------------------------------
+# Headway below this (minutes) flags "bunching" (two buses too close together).
+bunching_threshold_mins: 2.0
+
+# Headway above this (minutes) flags "gapping" (passengers waiting too long).
+gapping_threshold_mins: 30.0
+
+# Dwell time (minutes) above this flags a bottleneck at a station.
+dwell_time_anomaly_max_mins: 3.0
+
+# Headway exceeding this (minutes) is treated as a night-break / end-of-service
+# gap and will be excluded from headway statistics.
+night_break_headway_mins: 180.0
+
+# Time gap (seconds) between consecutive GPS pings of the same vehicle that
+# triggers a new trip / session boundary.
+new_session_gap_sec: 600
+
+# Trip-splitting gap (seconds) for the Gold data-mining pipeline.
+trip_split_max_gap_sec: 4200
+
+# On-time performance tolerance (minutes). Allowed deviation from schedule
+# before a trip is considered "late" or "early".
+on_time_performance_tolerance_mins: 5
+
+# ------------------------------------------------------------------------------
+# 3. SPEED THRESHOLDS
+# ------------------------------------------------------------------------------
+# Segment speed (km/h) below this implies a traffic bottleneck.
+bottleneck_max_speed_kmh: 10
+
+# Speed (km/h) at or below which a vehicle is considered "stationary at station".
+station_stationary_speed_kmh: 5
+
+# Maximum realistic speed (km/h). GPS points above this are likely erroneous.
+max_realistic_speed_kmh: 100
+
+# ------------------------------------------------------------------------------
+# 4. DRIVER PROFILING THRESHOLDS (Hard Rules → K-Means Bypass)
+# ------------------------------------------------------------------------------
+# Door-open violation rate (%) at or above which a driver is flagged as "Violator".
+driver_violation_rate_pct: 60.0
+
+# Speed standard deviation at or above which a driver is flagged as "Reckless".
+driver_reckless_speed_std: 13.0
+
+# Average speed (km/h) at or above which a compliant driver is labelled
+# "High Speed but Stable" instead of "Safe".
+driver_high_speed_kmh: 20.0
+
+# Minimum GPS data points a driver must have to be included in profiling.
+driver_min_gps_points: 100
+
+# ------------------------------------------------------------------------------
+# 5. DASHBOARD / KPI THRESHOLDS
+# ------------------------------------------------------------------------------
+# Service health target (%). KPI delta is calculated against this.
+service_health_target_pct: 80
+
+# Safe driver percentage (%). Below this, KPI shows alarm status.
+safe_driver_alert_pct: 75
+
+# Number of K-Means clusters for compliant-driver profiling.
+driver_kmeans_n_clusters: 3
+
+# FP-Growth / Association Rule defaults
+ar_min_support: 0.003
+ar_min_confidence: 0.8
+ar_max_itemset_len: 3
+
+# Domino chain: minimum occurrence count to be considered a real pattern.
+domino_min_occurrences: 3
+
+# Domino chain: minimum cascade length (stations) to be considered "spreading".
+domino_min_chain_length: 2
+
+# FP-Growth for route inference default min_support
+route_inference_min_support: 0.6
+
+# Drift detection overlap ratio for route-change detection
+route_drift_threshold: 0.5
+
+# Trip re-splitting: station-index drop threshold
+trip_resplit_drop_threshold: 5
+
+# Bounding Box for Ho Chi Minh City (geographic filter)
+geo_bounds:
+  min_lat: 10.2
+  max_lat: 11.3
+  min_lng: 106.2
+  max_lng: 107.1
+
+# Earth Radius (Meter)
+earth_radius_m: 6371000.0
+
+# FP-Growth threshold to prevent memory explosion
+fpgrowth_explosion_threshold: 20
+
+# Route Inference thresholds
+min_trips_per_segment: 2
+
+# Minimum number of stations in a trip to be considered a valid trip
+min_stations_per_trip: 2
+
+# Minimum number of core stations to be considered a valid infered route
+core_stations_min_count: 2
+
