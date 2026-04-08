@@ -468,8 +468,7 @@ threshold = _config['bunching_threshold_mins']  # = 2.0
 | **Hồ sơ Tài xế** | `driver_violation_rate_pct` | 60% | Ngưỡng Violator |
 | | `driver_reckless_speed_std` | 13 | Ngưỡng Reckless (lái giật cục) |
 | | `driver_high_speed_kmh` | 20 km/h | Ngưỡng Speedster |
-| **Khai phá** | `ar_min_support` | 0.003 | FP-Growth min support |
-| | `domino_min_occurrences` | 3 | Lọc chuỗi Domino ngẫu nhiên |
+| **Khai phá** | `domino_min_occurrences` | 3 | Lọc chuỗi Domino ngẫu nhiên |
 
 ---
 

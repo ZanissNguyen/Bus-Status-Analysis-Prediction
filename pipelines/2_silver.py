@@ -32,7 +32,7 @@ def unix_to_datetime(df):
     """
     Converts a Unix timestamp (in seconds) to a formatted datetime string.
     """
-    df['realtime'] = pd.to_datetime(df['datetime'], unit='s').dt.strftime('%d-%m-%Y %H:%M:%S')
+    df['realtime'] = (pd.to_datetime(df['datetime'], unit='s') + pd.Timedelta(hours=7)).dt.strftime('%d-%m-%Y %H:%M:%S')
     return df
     
 def get_bus_station_data():
