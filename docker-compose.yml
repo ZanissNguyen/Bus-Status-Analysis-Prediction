@@ -1,4 +1,3 @@
-
 services:
   bus_dashboard:
     build: .
@@ -6,9 +5,15 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      # Ánh xạ thư mục hiện tại vào /app trong container. 
-      # Sửa code Python ở ngoài thì web tự cập nhật, không cần build lại.
+      # Mount the entire project into the container.
+      # This allows:
+      #   1. Hot-reload: edit Python code outside → dashboard auto-updates
+      #   2. Data persistence: pipeline outputs are written to host disk
+      #   3. Raw data access: the pipeline reads data/bus_gps/*.json from host
       - .:/app
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
     restart: unless-stopped
+    # Allow generous time for the pipeline to finish before Docker kills it
+    stop_grace_period: 30s

@@ -32,7 +32,7 @@ def unix_to_datetime(df):
     """
     Converts a Unix timestamp (in seconds) to a formatted datetime string.
     """
-    df['realtime'] = pd.to_datetime(df['datetime'], unit='s').dt.strftime('%d-%m-%Y %H:%M:%S')
+    df['realtime'] = (pd.to_datetime(df['datetime'], unit='s') + pd.Timedelta(hours=7)).dt.strftime('%d-%m-%Y %H:%M:%S')
     return df
     
 def get_bus_station_data():
@@ -93,43 +93,38 @@ def get_gps_bronze_data():
 def clean_bus_gps_data(df):
     """
     Cleans raw GPS data by executing a pipeline of removals, deduplication, and geospatial bounding.
-    """
-    logger.info(f"Số dòng ban đầu (Bronze): {len(df)}")
-    
-    # 1. Bỏ các cột không cần thiết
-    df = df.drop(["heading", "aircon", "working", "ignition"], axis=1, errors='ignore')
-    
-    # 2. Ép kiểu thời gian
-    df = unix_to_datetime(df)
 
-    # 3. Khử trùng lặp
+    Optimization strategy: cheap row-reduction filters (dropna, geo-bound) run FIRST
+    so that expensive operations (sort, dedup) work on a smaller DataFrame.
+    """
+    n_raw = len(df)
+    logger.info(f"Số dòng ban đầu (Bronze): {n_raw}")
+
+    # 1. Bỏ các cột không cần thiết (giảm footprint bộ nhớ trước mọi thao tác)
+    cols_to_drop = [c for c in ("heading", "aircon", "working", "ignition") if c in df.columns]
+    if cols_to_drop:
+        df = df.drop(columns=cols_to_drop)
+
+    # 2. Loại bỏ tọa độ null + geo-bounding SỚM NHẤT CÓ THỂ
+    #    Đây là phép lọc O(n) rẻ, giảm đáng kể kích thước DataFrame
+    #    trước khi tiến vào sort/dedup (O(n·log n)).
+    df = df.dropna(subset=['y', 'x'])
+    df = df.loc[
+        df['y'].between(MIN_LAT, MAX_LAT) & df['x'].between(MIN_LNG, MAX_LNG)
+    ]
+    logger.info(f"Sau lọc tọa độ/geo-bound: {n_raw} → {len(df)} (loại {n_raw - len(df)} dòng)")
+
+    # 3. Ép kiểu thời gian (chỉ xử lý trên tập đã thu gọn)
+    df = unix_to_datetime(df)
+    logger.info("Ép kiểu thành công!")
+    # 4. Khử trùng lặp + sắp xếp (giờ chạy trên tập nhỏ hơn)
     df = df.drop_duplicates(subset=['vehicle', 'datetime'])
     df = df.sort_values(['vehicle', 'datetime'])
-
-    # 4. Xử lý Null - Định dạng Type tường minh để Fix triệt để Pandas FutureWarning
-    df = df.fillna({
-        'speed': 0.0,
-        'door_up': 0,
-        'door_down': 0
-    })
-    
-    # Ép kiểu an toàn (Safe Casting) sau khi fill để triệt tiêu Cảnh báo Incompatible Dtypes
+    logger.info("Sort & Dedup thành công!")
+    # 5. Xử lý Null + ép kiểu an toàn (batch)
+    df = df.fillna({'speed': 0.0, 'door_up': 0, 'door_down': 0})
     df['door_up'] = df['door_up'].astype(bool)
     df['door_down'] = df['door_down'].astype(bool)
-
-    # Xóa các dòng bị mất tọa độ trước khi lọc theo không gian
-    df = df.dropna(subset=['y', 'x'])
-
-    # ==========================================
-    # Lọc theo không gian vật lý
-    # Loại bỏ lập tức các lỗi phần cứng văng tọa độ ra khỏi khu vực TP.HCM
-    # ==========================================
-    valid_location_mask = (
-        (df['y'] >= MIN_LAT) & (df['y'] <= MAX_LAT) & 
-        (df['x'] >= MIN_LNG) & (df['x'] <= MAX_LNG)
-    )
-
-    df = df[valid_location_mask].copy()
     logger.info(f"Số dòng sau khi làm sạch: {len(df)}")
     return df
     
@@ -146,32 +141,55 @@ def map_bus_to_station(df, station_df):
     """
     Mapping mỗi điểm GPS với Trạm gần nhất bằng BallTree.
     Lớp SILVER: Giữ lại những điểm nằm trong bán kính quy định (silver_layer_max_distance_m).
+
+    Tối ưu:
+    - Lọc theo ngưỡng khoảng cách TRƯỚC khi gán cột → tránh ghi dữ liệu vào
+      hàng sẽ bị loại bỏ ngay sau đó.
+    - ravel() trả về view thay vì flatten() tạo bản sao.
+    - leaf_size nhỏ phù hợp với tập trạm có kích thước vừa (~vài trăm trạm).
     """
+    if df.empty:
+        logger.info("Số dòng sau khi Mapping (Silver Layer): 0")
+        return df.assign(current_station=[], station_distance=[], is_terminal=[])
 
-    # Chuẩn bị dữ liệu (Vectorization)
-    # Chuyển tọa độ sang radian
-    station_coords = np.radians(station_df[['y','x']].values)
-    status_coords = np.radians(df[['y','x']].values)
+    max_distance_m = _config['silver_layer_max_distance_m']
+    # Ngưỡng khoảng cách chuyển sang radian haversine để so sánh trực tiếp
+    # trên output BallTree, tránh nhân 6_371_000 cho toàn bộ mảng trước khi lọc.
+    max_distance_rad = max_distance_m / 6_371_000
 
-    # Xây dựng BallTree
-    tree = BallTree(station_coords, metric='haversine')
+    # Chuẩn bị tọa độ radian (contiguous arrays cho BallTree)
+    station_coords = np.radians(station_df[['y', 'x']].values)
+    gps_coords = np.radians(df[['y', 'x']].values)
 
-    distances, indices = tree.query(status_coords, k=1)
-    
-    # Flatten array để query Numpy
-    flat_indices = indices.flatten()
+    # Xây dựng BallTree — leaf_size nhỏ vì tập trạm chỉ ~vài trăm dòng
+    tree = BallTree(station_coords, metric='haversine', leaf_size=2)
 
-    distances_m = distances.flatten() * 6371000
-    
-    # Tối ưu: Lấy thẳng mảng Numpy thay vì qua iloc của DataFrame
-    nearest_station = station_df['Name'].values[flat_indices]
-    is_terminal_flags = station_df['is_terminal'].values[flat_indices]
+    distances_rad, indices = tree.query(gps_coords, k=1)
 
-    df['current_station'] = nearest_station
-    df['station_distance'] = distances_m
-    df['is_terminal'] = is_terminal_flags
+    # ravel() → view, không copy; flatten() tạo bản sao không cần thiết
+    distances_rad = distances_rad.ravel()
+    flat_indices = indices.ravel()
 
-    df = df[df['station_distance'] < _config['silver_layer_max_distance_m']].copy()
+    # ── Lọc SỚM theo ngưỡng radian ──────────────────────────────
+
+    # Lọc TRƯỚC khi gán cột: chỉ giữ mask, tránh tạo cột rồi lại drop.
+    mask = distances_rad < max_distance_rad
+
+    # Áp mask lên DataFrame — 1 lần .loc duy nhất
+    df = df.loc[mask].copy()
+
+    # Áp mask lên các mảng numpy tương ứng
+    kept_indices = flat_indices[mask]
+    kept_distances_m = distances_rad[mask] * 6_371_000
+
+    # Gán cột trên tập ĐÃ thu gọn (ít dòng hơn → ít bộ nhớ + nhanh hơn)
+    station_names = station_df['Name'].values
+    terminal_flags = station_df['is_terminal'].values
+
+    df['current_station'] = station_names[kept_indices]
+    df['station_distance'] = kept_distances_m
+    df['is_terminal'] = terminal_flags[kept_indices]
+
     logger.info(f"Số dòng sau khi Mapping (Silver Layer): {len(df)}")
     return df
     
