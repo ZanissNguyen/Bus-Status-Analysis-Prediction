@@ -43,15 +43,21 @@ def translate_prefixspan_patterns(df_flows, station_df):
         else:
             zone_dictionary[zone] = zone # Nếu không đúng format thì giữ nguyên
 
-    # 3. Hàm ráp lại chuỗi thành phẩm
+    # 3. Hàm ráp lại chuỗi thành phẩm (có loại bỏ trạm liên tiếp trùng nhau)
     def make_readable(pattern):
         zones = [z.strip() for z in str(pattern).split('->')]
         translated_zones = [zone_dictionary.get(z, z) for z in zones]
-        # Thay thế mũi tên text bằng Emoji mũi tên đậm cho trực quan
-        return " ➡️ ".join(translated_zones)
+        # Loại bỏ các trạm liên tiếp giống nhau sau khi dịch
+        # Ví dụ: [Ga metro KCNC] ➡️ [Ga metro KCNC] ➡️ [Bến xe] → [Ga metro KCNC] ➡️ [Bến xe]
+        deduped = [translated_zones[i] for i in range(len(translated_zones))
+                   if i == 0 or translated_zones[i] != translated_zones[i-1]]
+        return " ➡️ ".join(deduped)
 
     # 4. Tạo cột mới chứa chuỗi đã dịch
     df_flows['Readable_Pattern'] = df_flows['Jam_Pattern'].apply(make_readable)
+    
+    # 5. Loại bỏ pattern chỉ còn 1 trạm (không còn lan truyền sau khi dedupe)
+    df_flows = df_flows[df_flows['Readable_Pattern'].str.contains('➡️')].copy()
     
     return df_flows
 
@@ -136,12 +142,26 @@ def create_cluster(filtered_df, station_df, min_cluster_size):
     
     # CHẠY THUẬT TOÁN HDBSCAN
     if len(filtered_df) > min_cluster_size:
-        # Lấy tọa độ để Gom cụm (chuyển sang radian để dùng haversine distance cho chuẩn xác địa lý)
-        coords = np.radians(filtered_df[['y', 'x']])
-        
-        # metric='haversine' phù hợp nhất với tọa độ lat/lon
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, metric='haversine')
-        filtered_df['Cluster'] = clusterer.fit_predict(coords)
+        # Quy đổi lat/lon sang hệ mét (Equirectangular projection)
+        # Trong phạm vi TP.HCM (~20km), sai số < 0.1% so với Haversine
+        REF_LAT_RAD = np.radians(10.78)  # Vĩ độ tham chiếu trung tâm TP.HCM
+        METERS_PER_DEG_LAT = 111_320     # ~111.32 km / degree latitude
+        METERS_PER_DEG_LON = 111_320 * np.cos(REF_LAT_RAD)  # Điều chỉnh theo vĩ độ
+
+        coords_m = np.column_stack([
+            filtered_df['y'].values * METERS_PER_DEG_LAT,
+            filtered_df['x'].values * METERS_PER_DEG_LON
+        ])
+
+        # metric='euclidean' cho phép HDBSCAN dùng ball_tree (O(n log n), bộ nhớ O(n))
+        # thay vì brute-force (O(n²) RAM) khi dùng haversine
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            metric='euclidean',
+            min_samples=5,              # Giữ ổn định cụm
+            cluster_selection_method='eom'  # Excess of Mass (mặc định, tối ưu cho mật độ)
+        )
+        filtered_df['Cluster'] = clusterer.fit_predict(coords_m)
         
         # Chỉ lấy những điểm thuộc cụm (loại bỏ nhiễu -1)
         core_jams = filtered_df[filtered_df['Cluster'] != -1]
@@ -171,16 +191,20 @@ def create_cluster(filtered_df, station_df, min_cluster_size):
                 nearest_dist = dists_in_meters[nearest_idx]
                 nearest_station_name = stations_df.iloc[nearest_idx]['Name']
                 
-                # Trả về nhãn trực quan
+                # Trả về nhãn trực quan VÀ tên trạm nguyên bản
                 if nearest_dist < 100:
-                    return f"📍 Gần ngay tại trạm {nearest_station_name}"
+                    label = f"📍 Gần ngay tại trạm {nearest_station_name}"
                 else:
-                    return f"⚠️ Cách trạm {nearest_station_name} {int(nearest_dist)}m"
+                    label = f"⚠️ Cách trạm {nearest_station_name} {int(nearest_dist)}m"
+                
+                return label, nearest_station_name
 
-            # Áp dụng hàm để tạo cột Tên Khu Vực
-            cluster_stats['Cluster_Name'] = cluster_stats.apply(
+            # Áp dụng hàm để tạo cột Tên Khu Vực và Tên Trạm
+            res = cluster_stats.apply(
                 lambda row: get_nearest_landmark(row['y'], row['x'], station_df), axis=1
             )
+            cluster_stats['Cluster_Name'] = [x[0] for x in res]
+            cluster_stats['Nearest_Station'] = [x[1] for x in res]
 
             cluster_stats['tooltip_title'] = cluster_stats['Cluster_Name']
             cluster_stats['tooltip_content'] = "🔥 Mức độ: " + cluster_stats['Severity'].astype(str) + " tín hiệu kẹt"

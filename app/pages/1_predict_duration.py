@@ -4,7 +4,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import os
+import sys
 
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 # ==========================================
 # CẤU HÌNH TRANG CHỦ & CACHE DATA/MODELS
 # ==========================================
@@ -165,7 +171,7 @@ def main():
         st.info(f"📏 **Thống kê Lịch sử Chặng Này:**\n- Khoảng cách Mạng Lưới: **{avg_dist:.0f} Mét**\n- TG đi lý thuyết (0 kẹt xe): **{int(avg_dur//60)}p {int(avg_dur%60)}s**")
         
         st.markdown("<br/>", unsafe_allow_html=True)
-        predict_btn = st.button("🚀 KÍCH HOẠT NHÂN THẦN KINH DỰ ĐOÁN", use_container_width=True, type="primary")
+        predict_btn = st.button("🚀 KÍCH HOẠT NHÂN THẦN KINH DỰ ĐOÁN", width='content', type="primary")
 
     with col_result:
         st.subheader("2. 📊 Bảng Báo Cáo Kẹt Xe Lượng Tử")

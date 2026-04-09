@@ -104,7 +104,7 @@ def prepare_ml_data(silver_df):
     logger.info("Đang trích xuất Thuộc tính Thời gian (Datetime Features)...")
     # TỐI ƯU: Sử dụng thuộc tính .dt của Pandas siêu tốc thay vì datetime.strptime
     start_dt = pd.to_datetime(df_compressed['realtime'], format="%d-%m-%Y %H:%M:%S")
-    end_dt = pd.to_datetime(df_compressed['end_time_unix'], unit='s')
+    end_dt = pd.to_datetime(df_compressed['end_time_unix'], unit='s') + pd.Timedelta(hours=7)
 
     df_compressed['hour'] = start_dt.dt.hour
     df_compressed['week day'] = start_dt.dt.dayofweek

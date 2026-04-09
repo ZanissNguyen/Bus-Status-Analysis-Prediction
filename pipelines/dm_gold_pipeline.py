@@ -128,13 +128,16 @@ def calculate_derived_speed(df):
     logger.info("Hoàn tất tính toán avg_speed!")
     return df
 
-def split_trip_date(df, max_gap_seconds=None):
+def split_trip_date(df, max_gap_seconds=None, max_idle_seconds=None):
     """
     Split continuous GPS tracking into distinct physical trips based on time gaps.
     Assigns a rolling 'trip_id' for each vehicle.
     """
     if max_gap_seconds is None:
         max_gap_seconds = _config['trip_split_max_gap_sec']
+
+    if max_idle_seconds is None:
+        max_idle_seconds = _config['trip_split_max_idle_sec']
 
     # sort_values returns a new object by default, so .copy() is a redundant double memory allocation
     df = df.sort_values(by=['vehicle', 'datetime'])
@@ -146,24 +149,54 @@ def split_trip_date(df, max_gap_seconds=None):
     else:
         df['time_diff'] = time_diff_raw
     
-    # Một chuyến đi mới bắt đầu khi: 
-    # - Là dòng đầu tiên của xe đó (time_diff bị NaN)
-    # - HOẶC thời gian cách dòng trước > max_gap_seconds (ví dụ 30 phút)
-    df['is_new_trip'] = (df['time_diff'] > max_gap_seconds) | (df['time_diff'].isna())
+    is_new_by_gap = (df['time_diff'] > max_gap_seconds) | (df['time_diff'].isna())
     
-    # Tạo ID chuyến đi bằng cách cộng dồn (cumsum). Mỗi lần is_new_trip = True, ID sẽ tăng thêm 1
+    # 2. CẮT THEO BẾN CUỐI (Terminal State)
+    df['is_resting'] = (df['is_terminal'] == True) & (df['station_distance'] <= 100) & (df['speed'] < 10)
+    df['prev_is_resting'] = df.groupby('vehicle')['is_resting'].shift(1).fillna(False)
+    is_new_by_terminal = (df['prev_is_resting'] == True) & (df['is_resting'] == False)
+    
+    # ==========================================
+    # 3. MỚI: CẮT THEO "NGỦ ĐÔNG" (BẢO TRÌ/HỎNG HÓC)
+    # Cảnh báo: Phức tạp hơn một chút vì ta phải đo THỜI GIAN ĐỨNG IM
+    # ==========================================
+    # Tạo cờ xem xe có đang đứng im không (< 5 km/h)
+    df['is_stationary'] = df['speed'] < 5
+    
+    # Tính thời gian đứng im tích lũy. Nếu xe nhích lên > 5km/h, bộ đếm reset về 0
+    # Đây là một trick dùng Groupby kết hợp Cumsum rất kinh điển
+    df['move_trigger'] = (df['is_stationary'] == False).cumsum()
+    df['stationary_duration'] = df.groupby(['vehicle', 'move_trigger'])['time_diff'].cumsum().fillna(0)
+    
+    # Nếu thời gian đứng im vượt quá 2 tiếng (7200 giây)
+    df['is_long_idle'] = df['stationary_duration'] > max_idle_seconds
+    df['prev_is_long_idle'] = df.groupby('vehicle')['is_long_idle'].shift(1).fillna(False)
+    
+    # Kích hoạt cắt: Vừa thoát khỏi trạng thái ngủ đông (Bắt đầu lăn bánh rời xưởng/rời chỗ sửa xe)
+    is_new_by_idle = (df['prev_is_long_idle'] == True) & (df['is_long_idle'] == False)
+    
+    # ==========================================
+    # KẾT HỢP CẢ 3 LUẬT LẠI
+    # ==========================================
+    df['is_new_trip'] = is_new_by_gap | is_new_by_terminal | is_new_by_idle
+    # df['is_new_trip'] = is_new_by_terminal | is_new_by_idle
     df['trip_id'] = df.groupby('vehicle')['is_new_trip'].cumsum()
     
-    # Re-parse fallback realtime safely
-    df['realtime'] = pd.to_datetime(df['realtime'], dayfirst=True, errors='coerce')
-
-    df.drop(columns=['is_new_trip'], inplace=True)
+    # Clean up các cột tạm thời
+    df.drop(columns=[
+        'is_resting', 'prev_is_resting', 'is_stationary', 
+        'move_trigger', 'stationary_duration', 'is_long_idle', 'prev_is_long_idle', 'is_new_trip'
+    ], inplace=True, errors='ignore')
+    
     return df
 
 
 def create_stops_from_silver(df):
     """
     Cleans station definitions and aggressively drops invalid or unmonitored routes.
+    With 2-way station data, the same station Name can appear for both Outbound
+    and Inbound. We deduplicate by Name, merging the Routes lists from all
+    directions so the FP-Growth route dictionary remains correct.
     """
     df = df[['Name', 'Routes']].copy()
     
@@ -176,6 +209,14 @@ def create_stops_from_silver(df):
         return ','.join(filtered_routes)
     
     df['Routes'] = df['Routes'].apply(filter_and_join_routes)
+
+    # Deduplicate: same station may appear in both Outbound & Inbound.
+    # Group by Name and merge unique routes from all directions.
+    df = df.groupby('Name', as_index=False).agg(
+        {'Routes': lambda vals: ','.join(sorted(set(
+            r.strip() for v in vals for r in v.split(',') if r.strip()
+        )))}
+    )
 
     return df
 
@@ -334,7 +375,7 @@ def infer_route_dynamic_tracking(silver_df, stops_df, min_support=None, drift_th
     # Save JSON with absolute path and create directory if it doesn't exist
     out_dir = os.path.join(_PROJECT_ROOT, "data", "3_gold")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "infered_route_data.json")
+    out_path = os.path.join(out_dir, "inferred_route_data.json")
     
     final_result_df.to_json(out_path, orient="records", force_ascii=False, indent=4)
 
@@ -356,27 +397,51 @@ def re_split_trips_by_route(df, station_json_path, drop_threshold=None, max_gap_
     with open(station_json_path, 'r', encoding='utf-8') as f:
         routes_data = json.load(f)
         
+    # Build station index with Way (Outbound/Inbound) awareness.
+    # Each route now has separate Outbound and Inbound station sequences
+    # with potentially different station orders and indices.
     records = []
     for route_obj in routes_data:
         route_id = route_obj.get("RouteID")
+        way = route_obj.get("Way", "Outbound")  # Default cho các route cũ không có Way (70-5, 61-7)
         for idx, station in enumerate(route_obj.get("Stations", [])):
             records.append({
                 "RouteID": route_id,
+                "Way": way,
                 "StationName": station.get("Name"),
                 "station_index": idx
             })
             
     station_index_df = pd.DataFrame(records)
-    station_index_df = station_index_df.drop_duplicates(subset=['RouteID', 'StationName'], keep='first')
+    station_index_df = station_index_df.drop_duplicates(subset=['RouteID', 'Way', 'StationName'], keep='first')
     
+    # Strategy: Merge with Outbound first (the primary direction).
+    # If a station isn't found in Outbound, fall back to Inbound.
+    outbound_idx = station_index_df[station_index_df['Way'] == 'Outbound'][['RouteID', 'StationName', 'station_index']]
+    inbound_idx = station_index_df[station_index_df['Way'] == 'Inbound'][['RouteID', 'StationName', 'station_index']]
+    
+    # Primary merge: Outbound
     df = pd.merge(
         df, 
-        station_index_df, 
+        outbound_idx, 
         left_on=['inferred_route', 'current_station'], 
         right_on=['RouteID', 'StationName'], 
         how='left'
     )
     df.drop(columns=['RouteID', 'StationName'], inplace=True, errors='ignore')
+    
+    # Fallback merge: For rows that didn't match Outbound, try Inbound
+    missing_mask = df['station_index'].isna()
+    if missing_mask.any():
+        inbound_merge = pd.merge(
+            df.loc[missing_mask, ['inferred_route', 'current_station']].reset_index(),
+            inbound_idx,
+            left_on=['inferred_route', 'current_station'],
+            right_on=['RouteID', 'StationName'],
+            how='left'
+        ).set_index('index')['station_index']
+        
+        df.loc[missing_mask, 'station_index'] = inbound_merge
     
     df['station_index'] = df['station_index'].fillna(-1)
     
@@ -407,8 +472,8 @@ def re_split_trips_by_route(df, station_json_path, drop_threshold=None, max_gap_
     # Tạo lại trip_id hoàn toàn mới
     df['trip_id'] = df.groupby('vehicle')['is_new_trip'].cumsum()
     
-    # Dọn dẹp mạnh tay các biến tạm để khóa chống rò rỉ RAM (bao gồm cả time_diff)
-    df.drop(columns=['prev_route', 'prev_index', 'is_new_trip', 'time_diff'], inplace=True, errors='ignore')
+    # Dọn dẹp mạnh tay các biến tạm (bao gồm cả time_diff)
+    df.drop(columns=['prev_route', 'prev_index', 'station_index',  'is_new_trip', 'time_diff'], inplace=True, errors='ignore')
     
     logger.info("Hoàn tất chia lại chuyến!")
     return df
@@ -454,7 +519,7 @@ def main():
         (silver_df['trip_id'] <= silver_df['end_trip_id'])
     ].copy()
     
-    # === THÊM BƯỚC CHIA LẠI CHUYẾN THEO ROUTE & INDEX TẠI ĐÂY ===
+    # === BƯỚC CHIA LẠI CHUYẾN THEO ROUTE & INDEX  ===
     STATION_JSON_PATH = os.path.join(_PROJECT_ROOT, "data", "1_bronze", "bus_station.json")
     silver_df = re_split_trips_by_route(silver_df, STATION_JSON_PATH)
     
@@ -467,12 +532,16 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "dm_gold_data.parquet")
     
-    silver_df.to_parquet(out_path, engine="pyarrow", index=False)
-    logger.info("Đã lưu file dm_gold_data thành công!")
-    
+
     silver_df['datetime'] = pd.to_datetime(silver_df['realtime'], format='%d-%m-%Y %H:%M:%S')
     silver_df['date'] = silver_df['datetime'].dt.date
     silver_df['hour'] = silver_df['datetime'].dt.hour
+
+    silver_df.drop(columns=['start_trip_id', 'end_trip_id'], inplace=True)
+    
+    silver_df.to_parquet(out_path, engine="pyarrow", index=False)
+    logger.info("Đã lưu file dm_gold_data thành công!")
+    
 
     jam_df = silver_df.query(
         # "inferred_route == '50' and " 
@@ -484,7 +553,7 @@ def main():
         "door_down == False"
     ).copy()
     bs_path = os.path.join(_PROJECT_ROOT, "data", "black_spot.parquet")
-    jam_df.to_parquet(bs_path, engine="pyarrow") 
+    jam_df.to_parquet(bs_path, engine="pyarrow", index=False) 
     logger.info("Đã lưu file black_spot thành công!")  
 if __name__ == "__main__":
     main()

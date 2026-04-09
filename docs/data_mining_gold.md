@@ -1,4 +1,4 @@
-# Pipeline Data Mining Gold (`3.2_data_mining_gold.py`)
+# Pipeline Data Mining Gold (`dm_gold_pipeline.py`)
 
 > Pipeline xử lý dữ liệu Silver GPS thành Gold layer phục vụ phân tích vận hành. Bao gồm: nhận diện tuyến xe, phân chuyến, tính tốc độ, và trích xuất điểm kẹt xe (black spot).
 
@@ -12,7 +12,7 @@
 | File | Mô tả |
 |------|-------|
 | `data/3_gold/dm_gold_data.parquet` | GPS Silver + trip_id + inferred_route + avg_speed |
-| `data/3_gold/infered_route_data.json` | Kết quả nhận diện tuyến từng xe |
+| `data/3_gold/inferred_route_data.json` | Kết quả nhận diện tuyến từng xe |
 | `data/black_spot.parquet` | Các điểm GPS đang kẹt xe |
 
 **Luồng xử lý chính:**
@@ -37,6 +37,7 @@ Silver GPS ──→ [1] Nén trạm ──→ [2] Phân chuyến ──→ [3] 
 **Mục tiêu:** Từ ~N triệu bản ghi GPS, giữ lại chỉ 1 điểm đại diện mỗi lần xe ghé 1 trạm.
 
 **Logic:**
+
 1. Lọc `station_distance ≤ 50m` (chỉ giữ điểm "tại trạm")
 2. Gom các điểm GPS liên tiếp cùng xe + cùng trạm thành **block**
 3. Mỗi block chỉ giữ điểm có `station_distance` nhỏ nhất (gần tâm trạm nhất)
@@ -49,15 +50,21 @@ Silver GPS ──→ [1] Nén trạm ──→ [2] Phân chuyến ──→ [3] 
 
 ### Bước 2 — Phân chuyến (`split_trip_date`)
 
-**Mục tiêu:** Tách dòng GPS liên tục thành các chuyến đi riêng biệt (trip).
+**Mục tiêu:** Tách dòng GPS liên tục thành các chuyến đi riêng biệt (trip) dựa trên trạng thái vận hành.
 
-**Logic:** Một chuyến mới bắt đầu khi:
-- Là bản ghi đầu tiên của xe (`time_diff` = NaN)
-- HOẶC khoảng cách thời gian > `trip_split_max_gap_sec` = **4200s (70 phút)**
+**Logic:** Một chuyến mới được kích hoạt bởi 2 sự kiện:
 
-**Output:** Cột `trip_id` — ID chuyến rolling cho mỗi xe.
+1. **Rời bến (Terminal Release):** Xe đang ở trạng thái `is_terminal == True` và đứng yên, sau đó bắt đầu di chuyển rời khỏi bến.
+2. **Kích hoạt sau "Ngủ đông" (Idle/Bảo trì):** Xe đứng yên (`speed < 5 km/h`) liên tục trong khoảng thời gian > `trip_split_max_idle_sec` = **7200s (2 giờ)**. Khi xe lăn bánh trở lại, một `trip_id` mới được khởi tạo (giả định xe đã hoàn thành bảo trì/nghỉ ca).
+3. **Cắt theo Gap thời gian:** Nếu xe đứng yên > `trip_split_max_gap_sec` = **1800s (30 phút)**, một `trip_id` mới được khởi tạo.
 
-> Ví dụ: Xe 51B-123 có trip_id = 1, 2, 3... Xe 51B-456 có trip_id = 1, 2... (reset theo xe).
+**Ngưỡng:**
+
+- `trip_split_max_idle_sec`: 7200s (2h).
+- `station_distance` bến cuối ≤ 100m.
+- `trip_split_max_gap_sec`: 1800s (30 phút).
+
+> **Lưu ý:** Khác với các pipeline thông thường chỉ cắt theo Gap thời gian, Gold DM ưu tiên cắt theo hành vi vận hành thực tế tại bến và xưởng.
 
 ---
 
@@ -86,12 +93,12 @@ Trip 3 → Tương tự...
 Với mỗi segment (nhóm trip cùng tuyến):
 
 1. Encode danh sách trạm các trip thành binary matrix (`TransactionEncoder`)
-2. **Pre-check bùng nổ:** Nếu ≥ 20 trạm có support cao → bỏ qua FP-Growth, dùng luôn
+2. **Pre-check bùng nổ:** Nếu số lượng trạm frequent (support high) ≥ `fpgrowth_explosion_threshold` (**15 trạm**) → dùng luôn tập trạm này làm core để tránh bùng nổ tổ hợp của FP-Growth.
 3. **FP-Growth:** Tìm tập trạm xuất hiện thường xuyên nhất (support ≥ 0.6)
-4. **Majority Voting:** Tra từ điển `trạm → [tuyến]`, đếm phiếu bầu, chọn tuyến có phiếu cao nhất
+4. **Majority Voting:** Tra từ điển `trạm → [tuyến]`, đếm phiếu bầu, chọn tuyến có phiếu cao nhất (thắng tuyệt đối)
 5. Nếu hòa phiếu → bỏ qua segment (không chắc chắn)
 
-**Output:** `infered_route_data.json` — mỗi row là `{vehicle, start_trip_id, end_trip_id, inferred_route}`
+**Output:** `inferred_route_data.json` — mỗi row là `{vehicle, start_trip_id, end_trip_id, inferred_route}`
 
 **Ngưỡng loại bỏ:**
 
@@ -100,7 +107,7 @@ Với mỗi segment (nhóm trip cùng tuyến):
 | `min_trips_per_segment` | 2 | Segment phải có ≥ 2 trip |
 | `min_stations_per_trip` | 2 | Phải có ≥ 2 trạm unique |
 | `core_stations_min_count` | 2 | FP-Growth phải tìm được ≥ 2 trạm core |
-| `fpgrowth_explosion_threshold` | 20 | Bỏ qua FP-Growth nếu ≥ 20 trạm frequent |
+| `fpgrowth_explosion_threshold` | 15 | Bỏ qua FP-Growth nếu ≥ 15 trạm frequent |
 
 ---
 
@@ -137,12 +144,13 @@ Sau đó lọc: chỉ giữ `trip_id ≤ end_trip_id` (loại bỏ trip nằm ng
 |-----------|-------|
 | `prev_route ≠ inferred_route` | Xe đổi tuyến |
 | `prev_index - station_index ≥ 5` | Trạm nhảy lùi ≥ 5 bậc → xe quay vòng mới |
-| `time_diff > 4200s` | Nghỉ > 70 phút |
+| `time_diff > 1800s` | Nghỉ > 30 phút |
 
 **Luồng:**
-1. Đọc `bus_station.json` → tạo bảng `(RouteID, StationName) → station_index`
-2. Merge `station_index` vào GPS DataFrame
-3. Dùng `shift(1)` so sánh trạm hiện tại vs trạm trước → phát hiện reset/đổi tuyến
+
+1. Đọc `bus_station.json` → tạo bảng `(RouteID, Way, StationName) → station_index`. Thuật toán có khả năng nhận diện cả chiều đi (Outbound) và chiều về (Inbound).
+2. Merge `station_index` vào GPS DataFrame (ưu tiên Outbound, fallback Inbound).
+3. Dùng `shift(1)` so sánh trạm hiện tại vs trạm trước → phát hiện reset/đổi tuyến.
 4. Tạo `trip_id` mới bằng `cumsum`
 
 ---
@@ -152,6 +160,7 @@ Sau đó lọc: chỉ giữ `trip_id ≤ end_trip_id` (loại bỏ trip nằm ng
 **Công thức:** `avg_speed = (Haversine_distance / time_diff) × 3.6` (km/h)
 
 **Luồng:**
+
 1. `shift(1)` lấy tọa độ điểm trước trong cùng trip
 2. Haversine vectorized (Numpy) → `distance_m`
 3. `groupby().diff()` → `time_diff_sec`
@@ -171,7 +180,7 @@ Sau đó lọc: chỉ giữ `trip_id ≤ end_trip_id` (loại bỏ trip nằm ng
 |-----------|--------|----------|
 | `speed < 5 km/h` | `station_stationary_speed_kmh` | Xe đứng yên |
 | `avg_speed < 10 km/h` | `bottleneck_max_speed_kmh` | Đoạn đường tắc |
-| `station_distance > 50m` | `jam_far_from_station_m` | Không phải tại trạm |
+| `station_distance > 100m` | `jam_far_from_station_m` | Không phải tại trạm |
 | `is_terminal == False` | — | Không phải bến xe đầu/cuối |
 | `door_up == False AND door_down == False` | — | Không đang đón/trả khách |
 
@@ -184,17 +193,17 @@ Sau đó lọc: chỉ giữ `trip_id ≤ end_trip_id` (loại bỏ trip nằm ng
 | Key | Giá trị | Dùng ở bước |
 |-----|---------|-------------|
 | `station_distance_max_m` | 50 | Bước 1 (nén trạm) |
-| `trip_split_max_gap_sec` | 4200 | Bước 2, 5 (phân chuyến) |
+| `trip_split_max_gap_sec` | 1800 | Bước 5 (phân chuyến) |
 | `route_inference_min_support` | 0.6 | Bước 3 (FP-Growth) |
 | `route_drift_threshold` | 0.5 | Bước 3 (drift detection) |
-| `fpgrowth_explosion_threshold` | 20 | Bước 3 (anti-explosion) |
+| `fpgrowth_explosion_threshold` | 15 | Bước 3 (anti-explosion) |
 | `min_trips_per_segment` | 2 | Bước 3 (filter) |
 | `min_stations_per_trip` | 2 | Bước 3 (filter) |
 | `core_stations_min_count` | 2 | Bước 3 (filter) |
 | `trip_resplit_drop_threshold` | 5 | Bước 5 (sequence reset) |
 | `station_stationary_speed_kmh` | 5 | Bước 7 (black spot) |
 | `bottleneck_max_speed_kmh` | 10 | Bước 7 (black spot) |
-| `jam_far_from_station_m` | 50 | Bước 7 (black spot) |
+| `jam_far_from_station_m` | 100 | Bước 7 (black spot) |
 | `earth_radius_m` | 6371000 | Bước 6 (Haversine) |
 
 ---
@@ -203,10 +212,11 @@ Sau đó lọc: chỉ giữ `trip_id ≤ end_trip_id` (loại bỏ trip nằm ng
 
 ```bash
 # Tiền điều kiện: Đã chạy xong Pipeline Silver
-python pipelines/3.2_data_mining_gold.py
+python -m pipelines.dm_gold_pipeline
 ```
 
 **Tiền điều kiện file:**
+
 - `data/2_silver/bus_gps_data.parquet` ✅
 - `data/2_silver/bus_station_data.json` ✅
 - `data/1_bronze/bus_station.json` ✅ (dùng cho Bước 5)
