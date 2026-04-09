@@ -54,7 +54,7 @@ def prepare_ml_data(silver_df):
     
     # 2.2. Nén các điểm lặp liên tiếp tại cùng 1 trạm (chỉ giữ điểm gần nhất)
     is_new_block = (df_ml['current_station'] != df_ml['current_station'].shift(1)) | \
-                   (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
+                    (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
 
     df_ml['block_id'] = is_new_block.cumsum()
     idx_min_distance = df_ml.groupby('block_id')['station_distance'].idxmin()
@@ -137,7 +137,6 @@ def prepare_ml_data(silver_df):
         'start station', 'end station', 'route', 'hour_sin', "hour_cos", 'weekend', 
         'distance (m)', 'duration (s)'
     ]
-    
     result_df = df_final[final_columns]
     
     print(f"Kích thước Dataset cuối cùng: {len(result_df)}")
