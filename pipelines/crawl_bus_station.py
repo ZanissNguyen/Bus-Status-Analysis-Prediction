@@ -48,9 +48,9 @@ def save_to_json(data, filepath="./data/1_bronze/bus_station.json"):
         return
         
     # 'w' tự động ghi đè file cũ, không cần os.remove()
-    with open(filename, "w", encoding="utf-8") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    print(f"\n[V] Đã lưu thành công {len(data)} tuyến vào {filename}")
+    print(f"\n[V] Đã lưu thành công {len(data)} tuyến vào {filepath}")
 
 # ==========================================
 # 3. LUỒNG ĐIỀU PHỐI (ETL)
@@ -77,25 +77,28 @@ def run_crawl_scripts():
                 print(f"[-] Bỏ qua route {route_id}: Không có dữ liệu metadata.")
                 time.sleep(1)
                 continue
+                
+            for var in range(len(metadata)):
+                # Rút trích thông tin an toàn (dùng .get để tránh KeyError)
+                route_info = metadata[var]
+                var_id = route_info.get("RouteVarId")
+                route_no = route_info.get("RouteNo")
 
-            # Rút trích thông tin an toàn (dùng .get để tránh KeyError)
-            route_info = metadata[0]
-            var_id = route_info.get("RouteVarId")
-            route_no = route_info.get("RouteNo")
+                if not var_id:
+                    print(f"[-] Bỏ qua route {route_id}: Không tìm thấy RouteVarId.")
+                    continue
 
-            if not var_id:
-                print(f"[-] Bỏ qua route {route_id}: Không tìm thấy RouteVarId.")
-                continue
+                # BƯỚC 2: Lấy danh sách trạm (Stops)
+                ls_stops = get_stops_by_var(page, route_id, var_id)
 
-            # BƯỚC 2: Lấy danh sách trạm (Stops)
-            ls_stops = get_stops_by_var(page, route_id, var_id)
-
-            if ls_stops:
-                result_data.append({
-                    "RouteID": route_no,
-                    "Stations": ls_stops
-                })
-                print(f"[+] Lấy thành công dữ liệu trạm cho tuyến số: {route_no}")
+                if ls_stops:
+                    way = 'Outbound' if var == 0 else 'Inbound'
+                    result_data.append({
+                        "RouteID": route_no,
+                        "Way": way,
+                        "Stations": ls_stops
+                    })
+                    print(f"[+] Lấy thành công dữ liệu trạm cho tuyến số: {route_no} lượt {way}")
             
             # Thời gian nghỉ giữa các vòng lặp
             time.sleep(0.5)
@@ -105,6 +108,82 @@ def run_crawl_scripts():
         page.quit()
         print("\nĐã dọn dẹp và đóng trình duyệt.")
 
+    # Add missing route
+    result_data.append({
+        "RouteID": "70-5",
+        "Stations": [
+            {
+                "StopId": "",
+                "Code": "",
+                "Name": "Bố Heo",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "Đang khai thác",
+                "Lng": 106.421654,
+                "Lat": 11.061847,
+                "Search": "",
+                "Routes": "70-5"
+            },
+            {
+                "StopId": "",
+                "Code": "BX95",
+                "Name": "Bến xe Lộc Hưng",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "",
+                "Lng": 106.390488,
+                "Lat": 11.101657,
+                "Search": "",
+                "Routes": "70-5"
+            }
+        ]
+    })
+
+    result_data.append({
+        "RouteID": "61-7",
+        "Stations": [
+            {
+                "StopId": "",
+                "Code": "",
+                "Name": "Cầu Phú Cường",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "Đang khai thác",
+                "Lng": 106.643778,
+                "Lat": 10.977530,
+                "Search": "",
+                "Routes": "61-7, 70B"
+            },
+            {
+                "StopId": "",
+                "Code": "BX95",
+                "Name": "Bến xe Bình Dương",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "",
+                "Lng": 106.668574,
+                "Lat": 10.965938,
+                "Search": "",
+                "Routes": "61-7"
+            }
+        ]
+    })
     # BƯỚC 3: Lưu dữ liệu
     save_to_json(result_data)
 

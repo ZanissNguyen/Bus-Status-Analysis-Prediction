@@ -36,12 +36,19 @@ def add_historical_features(train_df, test_df):
     start_avg = train_df.groupby("start station")["duration (s)"].mean()
     end_avg   = train_df.groupby("end station")["duration (s)"].mean()
     global_avg = train_df["duration (s)"].mean()
+    route_distance = train_df.groupby("route")["distance (m)"].mean()
+    start_distance = train_df.groupby("start station")["distance (m)"].mean()
+    end_distance = train_df.groupby("end station")["distance (m)"].mean()
+    global_distance = train_df["distance (m)"].mean()
 
     for df_ in [train_df, test_df]:
         
         df_["avg_route_duration"] = df_["route"].map(route_avg)
+        df_["avg_route_distance"] = df_["route"].map(route_distance)
         df_["avg_start_duration"] = df_["start station"].map(start_avg)
         df_["avg_end_duration"] = df_["end station"].map(end_avg)
+        df_["avg_start_distance"] = df_["start station"].map(start_distance)
+        df_["avg_end_distance"] = df_["end station"].map(end_distance)
 
         df_["avg_route_duration"] = (
             df_["avg_route_duration"]
@@ -50,7 +57,14 @@ def add_historical_features(train_df, test_df):
             .fillna(global_avg)
         )
 
-    return train_df, test_df
+        df_["avg_route_distance"] = (
+            df_["avg_route_distance"]
+            .fillna(df_["avg_start_distance"])
+            .fillna(df_["avg_end_distance"])
+            .fillna(global_distance)
+        )
+
+    return train_df, test_df, global_avg, global_distance
 
 def routewise_normalized_error(X_test, Y_test, y_pred):
     """
@@ -316,14 +330,20 @@ def feature_engineering_and_train_model(df):
     test_df  = df.iloc[split_idx:]
 
     his = "./data/3_gold/historical/"
-    train_df, test_df = add_historical_features(train_df, test_df)
+    train_df, test_df, global_avg, global_distance = add_historical_features(train_df, test_df)
     # save prehistorical data for deploying
-    route_df = train_df[["route", "avg_route_duration"]]
-    route_df.to_json(his+"avg_route_duration.json", orient="records", force_ascii=False, indent=4)
-    start_df = train_df[["start station", "avg_start_duration"]]
-    start_df.to_json(his+"avg_start_duration.json", orient="records", force_ascii=False, indent=4)
-    end_df = train_df[["end station", "avg_end_duration"]]
-    end_df.to_json(his+"avg_end_duration.json", orient="records", force_ascii=False, indent=4)
+    global_avg = [[global_avg, global_distance]]
+    route_df = train_df[["route", "avg_route_duration", "avg_route_distance"]].drop_duplicates()
+    route_df.to_json(his+"avg_route_data.json", orient="records", force_ascii=False, indent=4)
+    start_df = train_df[["start station", "avg_start_duration", "avg_start_distance"]]
+    start_df.to_json(his+"avg_start_data.json", orient="records", force_ascii=False, indent=4)
+    end_df = train_df[["end station", "avg_end_duration", "avg_end_distance"]]
+    end_df.to_json(his+"avg_end_data.json", orient="records", force_ascii=False, indent=4)
+    global_df = pd.DataFrame(
+        global_avg,
+        columns=["avg_duration", "avg_distance"]
+    )
+    global_df.to_json(his+"global_avg_data.json", orient="records", force_ascii=False, indent=4)
 
     X_train = train_df.drop(columns=[target])
     Y_train = train_df[target].values
