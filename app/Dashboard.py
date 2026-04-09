@@ -62,7 +62,7 @@ def load_and_prepare_data():
         
     # --- Schema 4: Reliability Metrics ---
     try:
-        df_reliability = pd.read_csv(os.path.join(data_dir, "bunching.csv"))
+        df_reliability = pd.read_parquet(os.path.join(data_dir, "bunching.parquet"))
         if len(df_reliability) < 50: raise ValueError
     except:
         df_reliability = generate_schema_4_reliability()
@@ -180,17 +180,12 @@ def main():
     
     # Load Data với Cache
     with st.spinner("Đang truy xuất dữ liệu..."):
-        df_gps, df_trip, df_metrics, df_rel = load_and_prepare_data()
+        _ , df_trip, df_metrics, df_rel = load_and_prepare_data()
         
     if df_rel.empty:
         st.error("Lỗi Dữ liệu: Schema 4 (Reliability Matrix) đang bị rỗng. Vui lòng nạp lại Pipeline.")
         return
 
-    # ==========================================
-    # QUẢN TRỊ SIDEBAR (GLOBAL FILTERS)
-    # ==========================================
-    st.sidebar.header("⚙️ Bộ Lọc Toàn Cục")
-    
     # Chuẩn bị cột Date để có thể xài bộ lọc thời gian thực tế
     if 'date' not in df_rel.columns:
         df_rel['date'] = pd.to_datetime(df_rel['arrival_time']).dt.date
@@ -200,6 +195,13 @@ def main():
             df_trip['date'] = pd.to_datetime(df_trip[time_col], errors='coerce').dt.date
         else:
             df_trip['date'] = pd.to_datetime(df_trip[time_col], errors='coerce', unit='s').dt.date
+            
+    # ==========================================
+    # QUẢN TRỊ SIDEBAR (GLOBAL FILTERS)
+    # ==========================================
+    st.sidebar.header("⚙️ Bộ Lọc Toàn Cục")
+    
+    
             
     # Lọc Tuyến (Multi-select)
     all_routes = sorted(list(df_rel['inferred_route'].unique()))
@@ -431,7 +433,7 @@ def main():
     st.markdown("### 🔍 Mô tả chi tiết")
     
     tab_routes, tab_heatmap, tab_alerts, tab_drivers = st.tabs([
-        "🚨 Bảng chi tiết các tuyến", 
+        "🚨 Bảng xếp hạng chi tiết các tuyến", 
         "🔥 Ma trận nhiệt tốc độ các cặp trạm", 
         "⚡ Bảng các điểm nghẽn theo trạm",
         "👤 Bảng đánh giá các tài xế"
@@ -458,14 +460,15 @@ def main():
         # Phiên dịch tên các cột cơ sở
         route_perf = route_perf.rename(columns={
             'inferred_route': 'Tuyến',
-            'Total_Stops': 'Tổng Lượt Dừng Đỗ'
+            'Total_Stops': 'Tổng Lượt Dừng Đỗ',
+            'Bad_Score': 'Tổng điểm'
         })
         
-        display_cols = ['Tuyến', 'Tổng Lượt Dừng Đỗ', 'Phần trăm Bottleneck của tuyến (%)', 'Phần trăm Bunching của tuyến (%)', 'Phần trăm Gapping của tuyến (%)']
+        display_cols = ['Tuyến', 'Tổng Lượt Dừng Đỗ', 'Phần trăm Bottleneck của tuyến (%)', 'Phần trăm Bunching của tuyến (%)', 'Phần trăm Gapping của tuyến (%)', 'Tổng điểm']
         
         st.dataframe(
             route_perf[display_cols].style.background_gradient(
-                subset=['Phần trăm Bottleneck của tuyến (%)', 'Phần trăm Bunching của tuyến (%)', 'Phần trăm Gapping của tuyến (%)'], 
+                subset=['Phần trăm Bottleneck của tuyến (%)', 'Phần trăm Bunching của tuyến (%)', 'Phần trăm Gapping của tuyến (%)', 'Tổng điểm'], 
                 cmap='Reds'
             ),
             width='stretch',
@@ -626,7 +629,7 @@ def main():
             display_cols.append('Phân loại')
 
             st.dataframe(
-                df_drivers[display_cols].style.applymap(color_profile, subset=['Phân loại']),
+                df_drivers[display_cols].style.map(color_profile, subset=['Phân loại']),
                 width='stretch',
                 hide_index=True,
                 height=450,

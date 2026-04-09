@@ -111,6 +111,7 @@ def run_crawl_scripts():
     # Add missing route
     result_data.append({
         "RouteID": "70-5",
+        "Way": "Outbound",
         "Stations": [
             {
                 "StopId": "",
@@ -148,7 +149,47 @@ def run_crawl_scripts():
     })
 
     result_data.append({
+        "RouteID": "70-5",
+        "Way": "Inbound",
+        "Stations": [
+            {
+                "StopId": "",
+                "Code": "BX95",
+                "Name": "Bến xe Lộc Hưng",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "",
+                "Lng": 106.390488,
+                "Lat": 11.101657,
+                "Search": "",
+                "Routes": "70-5"
+            },
+            {
+                "StopId": "",
+                "Code": "",
+                "Name": "Bố Heo",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "Đang khai thác",
+                "Lng": 106.421654,
+                "Lat": 11.061847,
+                "Search": "",
+                "Routes": "70-5"
+            }
+        ]
+    })
+
+    result_data.append({
         "RouteID": "61-7",
+        "Way": "Outbound",
         "Stations": [
             {
                 "StopId": "",
@@ -181,6 +222,45 @@ def run_crawl_scripts():
                 "Lat": 10.965938,
                 "Search": "",
                 "Routes": "61-7"
+            }
+        ]
+    })
+
+    result_data.append({
+        "RouteID": "61-7",
+        "Way": "Inbound",
+        "Stations": [
+            {
+                "StopId": "",
+                "Code": "BX95",
+                "Name": "Bến xe Bình Dương",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "",
+                "Lng": 106.668574,
+                "Lat": 10.965938,
+                "Search": "",
+                "Routes": "61-7"
+            },
+            {
+                "StopId": "",
+                "Code": "",
+                "Name": "Cầu Phú Cường",
+                "StopType": "Bến xe",
+                "Zone": "",
+                "Ward": "",
+                "AddressNo": "",
+                "Street": "",
+                "SupportDisability": "",
+                "Status": "Đang khai thác",
+                "Lng": 106.643778,
+                "Lat": 10.977530,
+                "Search": "",
+                "Routes": "61-7, 70B"
             }
         ]
     })

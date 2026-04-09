@@ -39,7 +39,7 @@
 | 1 | GPS Silver | `2_silver/bus_gps_data.parquet` | Dữ liệu GPS gốc + driver profiling |
 | 2 | Trip Gold | `3_gold/dm_gold_data.parquet` | Tốc độ TB, trip_id, inferred_route |
 | 3 | ML Gold | `3_gold/ml_gold_data.parquet` | distance/duration → segment speed heatmap |
-| 4 | Reliability | `bunching.csv` | Headway, dwell_time, bunching/gapping flags |
+| 4 | Reliability | `bunching.parquet` | Headway, dwell_time, bunching/gapping flags |
 
 ### Cơ chế Synthetic Fallback
 
