@@ -65,7 +65,6 @@ def is_same_day(rt1, rt2):
     t2 = datetime.strptime(rt2, fmt)
     return t1.date() == t2.date()
 
-
 # Get data
 
 def get_silver_data():
@@ -140,23 +139,33 @@ def prepare_ml_data(silver_df):
     print("6. Bắt đầu làm sạch cuối cùng (Final Filtering)...")
     # Áp dụng các bộ lọc
     df_final = df_compressed[
-        is_same_day & 
-        (df_compressed['distance (m)'] > 100) &  # Giữ logic lọc khoảng cách quá ngắn của bạn
-        (df_compressed['duration (s)'] > 10)     # Lọc các dòng bị lỗi thời gian di chuyển siêu nhanh
+        is_same_day &
+        (df_compressed["distance (m)"] <= 3000) & 
+        (df_compressed["distance (m)"] > 100) & 
+        (df_compressed["duration (s)"] <= 1800) & 
+        (df_compressed['duration (s)'] > 10)
     ].copy()
 
     # Đổi tên cột cho chuẩn
     df_final = df_final.rename(columns={'current station': 'start station'})
     
+    df_final["route"] = df_final["start station"] + "_" + df_final["end station"]
+
+    # Preprocessing numerical feature 
+    df_final["weekend"] = (df_final["week day"]>=5).astype(int)
+    df_final["hour_sin"] = np.sin(2*np.pi*df_final["hour"]/24)
+    df_final["hour_cos"] = np.cos(2*np.pi*df_final["hour"]/24)
+
     # Chỉ giữ lại các cột cần thiết cho Machine Learning
     final_columns = [
-        'start station', 'end station', 'hour', 'week day', 
+        'start station', 'end station', 'route', 'hour_sin', "hour_cos", 'weekend', 
         'distance (m)', 'duration (s)'
     ]
     
     result_df = df_final[final_columns]
     
     print(f"Kích thước Dataset cuối cùng: {len(result_df)}")
+    print(result_df.head())
     return result_df
 
 def main():
