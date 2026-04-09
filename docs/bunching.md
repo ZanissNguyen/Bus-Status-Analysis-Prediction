@@ -7,7 +7,7 @@
 ## Tổng quan
 
 ```
-dm_gold_data.parquet ──→ [Pipeline 3.2.1] ──→ bunching.csv + domino_rules.csv
+dm_gold_data.parquet ──→ [bunching_pipeline.py] ──→ bunching.parquet + domino_rules.parquet
                                                       │
                                                       ▼
                                           [Dashboard 3_Transit_Performance.py]
@@ -18,12 +18,12 @@ dm_gold_data.parquet ──→ [Pipeline 3.2.1] ──→ bunching.csv + domino_
 
 | Output | Mô tả |
 |--------|-------|
-| `data/bunching.csv` | Bảng stop events với cờ bunching/gapping/bottleneck |
-| `data/domino_rules.csv` | Các chuỗi lỗi liên hoàn (domino chains) lặp lại ≥ 3 lần |
+| `data/bunching.parquet` | Bảng stop events với cờ bunching/gapping/bottleneck |
+| `data/domino_rules.parquet` | Các chuỗi lỗi liên hoàn (domino chains) lặp lại ≥ 3 lần |
 
 ---
 
-## Phần 1: Pipeline (`3.2.1_bunching.py`)
+## Phần 1: Pipeline (`bunching_pipeline.py`)
 
 **Input:** `data/3_gold/dm_gold_data.parquet` (output của pipeline 3.2)
 
@@ -89,7 +89,7 @@ Headway > `night_break_headway_mins = 180 phút` → gán NaN (nghỉ đêm, kh�
    - Chỉ giữ chuỗi có ≥ `domino_min_chain_length = 2` trạm
    - Chỉ giữ chuỗi lặp lại ≥ `domino_min_occurrences = 3` lần
 
-**Output:** `domino_rules.csv` — 3 cột:
+**Output:** `domino_rules.parquet` — 3 cột:
 
 | Cột | Mô tả |
 |-----|-------|
@@ -136,7 +136,7 @@ Headway > `night_break_headway_mins = 180 phút` → gán NaN (nghỉ đêm, kh�
 
 ### Tab 3 — Chuỗi Domino
 
-- Đọc `domino_rules.csv` (output pipeline 3.2.1)
+- Đọc `domino_rules.parquet` (output `bunching_pipeline.py`)
 - Hỗ trợ **tìm kiếm text** theo tên trạm (case-insensitive)
 - Layout 2 cột:
   - **Trái:** Horizontal bar chart Top 15 chuỗi domino nguy hiểm nhất (màu gradient Reds)
@@ -166,7 +166,7 @@ Headway > `night_break_headway_mins = 180 phút` → gán NaN (nghỉ đêm, kh�
 
 ```bash
 # Tiền điều kiện: Đã chạy pipeline 3.2 (Data Mining Gold)
-python pipelines/3.2.1_bunching.py
+python -m pipelines.bunching_pipeline
 
 # Sau đó chạy Dashboard
 streamlit run app/Dashboard.py

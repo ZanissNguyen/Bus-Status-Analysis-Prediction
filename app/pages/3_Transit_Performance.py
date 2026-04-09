@@ -33,7 +33,7 @@ def load_station_data():
 
 @st.cache_data
 def load_transit_data():
-    df = pd.read_csv(os.path.join(data_dir, "bunching.csv"), engine='pyarrow')
+    df = pd.read_parquet(os.path.join(data_dir, "bunching.parquet"), engine='pyarrow')
 
     df['date'] = df['arrival_time'].dt.date
     df['hour'] = df['arrival_time'].dt.hour
@@ -43,7 +43,7 @@ def load_transit_data():
 @st.cache_data
 def load_domino_rules():
     try:
-        rules_df = pd.read_csv(os.path.join(data_dir, "domino_rules.csv"), encoding="utf-8")
+        rules_df = pd.read_parquet(os.path.join(data_dir, "domino_rules.parquet"), engine='pyarrow')
         return rules_df
     except Exception:
         return pd.DataFrame()
@@ -63,8 +63,18 @@ def main():
     
     # Lọc Ngày
     available_dates = sorted(df['date'].unique())
-    selected_date = st.sidebar.date_input("📅 Chọn Ngày:", value=available_dates[0])
+    date_range = st.sidebar.date_input(
+        "📅 Chọn khoảng ngày:", 
+        value=(available_dates[0], available_dates[-1]) if available_dates else None, 
+        min_value=available_dates[0] if available_dates else None, 
+        max_value=available_dates[-1] if available_dates else None
+    )
     
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date = end_date = date_range[0]
+        
     # Lọc Tuyến
     available_routes = sorted(df['inferred_route'].astype(str).unique())
     selected_route = st.sidebar.selectbox("🗺️ Chọn Tuyến:", options=available_routes)
@@ -106,7 +116,8 @@ def main():
 
     # Lấy dữ liệu cho TẤT CẢ CÁC TUYẾN (Dành cho tab so sánh)
     mask_all_routes = (
-        (df['date'] == selected_date) & 
+        (df['date'] >= start_date) &             
+        (df['date'] <= end_date) &  
         (df['hour'] >= hour_range[0]) & 
         (df['hour'] <= hour_range[1])
     )
@@ -175,7 +186,7 @@ def main():
                 ))
                 fig_bunch.update_yaxes(autorange="reversed")
                 fig_bunch.update_layout(height=600, xaxis_title="Khung giờ", yaxis_title="")
-                st.plotly_chart(fig_bunch, use_container_width=True)
+                st.plotly_chart(fig_bunch, width='content')
                 
             with col2:
                 st.markdown("**2. Tỷ lệ Gapping (Thủng tuyến) %**")
@@ -190,7 +201,7 @@ def main():
                 ))
                 fig_gap.update_yaxes(autorange="reversed")
                 fig_gap.update_layout(height=600, xaxis_title="Khung giờ", yaxis_title="")
-                st.plotly_chart(fig_gap, use_container_width=True)
+                st.plotly_chart(fig_gap, width='content')
         else:
             st.warning("Không có dữ liệu cho bộ lọc hiện tại.")
 
@@ -319,7 +330,7 @@ def main():
                     st.dataframe(
                         filtered_domino.style.background_gradient(cmap='OrRd', subset=['Số lần lặp lại (Occurrences)']),
                         height=500, # Ngang hàng với biểu đồ Bar
-                        use_container_width=True,
+                        width='content',
                         hide_index=True
                     )
         else:

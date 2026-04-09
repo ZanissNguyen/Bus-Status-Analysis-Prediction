@@ -1,7 +1,13 @@
 import pytest
 import pandas as pd
 from pandas.testing import assert_frame_equal
+import os
+import sys
 
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+    
 from pipelines.bronze_to_silver import clean_bus_station_data
 
 @pytest.mark.unit

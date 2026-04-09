@@ -34,7 +34,7 @@ def main():
         jam_df = load_data()
         station_df = load_station_data()
 
-    tab_hotspot, tab_domino = st.tabs(["📍 Bản đồ 'điểm đen' kẹt xe", "🌊 Bản đồ hiệu ứng domino"])
+    tab_hotspot, tab_domino = st.tabs(["📍 Bản đồ điểm đen kẹt xe", "🌊 Bản đồ hiệu ứng domino"])
     # ==========================================
     # SIDEBAR: BỘ LỌC ĐA CHIỀU
     # ==========================================
@@ -81,6 +81,13 @@ def main():
         help="Số lượng tín hiệu kẹt xe tối thiểu để công nhận đây là một vùng kẹt xe hợp lệ."
     )
 
+    st.sidebar.subheader("🔗 Cấu hình PrefixSpan")
+    min_support = st.sidebar.slider(
+        "Tần suất lặp lại tối thiểu",
+        min_value=5, max_value=100, value=20, step=5,
+        help="Số lần tối thiểu một chuỗi kẹt xe phải lặp lại để được coi là mẫu có ý nghĩa (min_support)."
+    )
+
     # ==========================================
     # ENGINE LỌC DỮ LIỆU
     # ==========================================
@@ -97,10 +104,12 @@ def main():
         
     filtered_df = jam_df[mask].copy()
 
-    
-
     cluster_centers = create_cluster(filtered_df, station_df, min_cluster_size)
-    prefix_df = sequential_mining(filtered_df, min_support=20) 
+
+    if not cluster_centers.empty:
+        cluster_centers = cluster_centers.sort_values(by='Severity', ascending=False).drop_duplicates(subset=['Nearest_Station']).reset_index(drop=True)
+    
+    prefix_df = sequential_mining(filtered_df, min_support=min_support) 
     flow_df = process_prefixspan_data(prefix_df)
     # Đảm bảo danh sách tuyến được chọn là kiểu chuỗi (string)
     selected_routes_str = [str(r) for r in selected_routes]
@@ -118,38 +127,63 @@ def main():
     filtered_stations['tooltip_content'] = "Tuyến: " + filtered_stations['Routes'].astype(str)
 
     st.sidebar.markdown(f"**Đang hiển thị:** `{len(filtered_df)}` điểm GPS")
+    # ==========================================
+    # TÍNH NĂNG MỚI: TÌM KIẾM TRẠM & ZOOM
+    # ==========================================
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔍 Khảo sát Trạm")
+    
+    # 1. Lấy danh sách tên trạm hiện có trong bộ lọc
+    station_names = ["--- Xem toàn cảnh thành phố ---"]
+    if not filtered_stations.empty:
+        station_names.extend(sorted(filtered_stations['Name'].unique().tolist()))
+    
+    # 2. Tạo Selectbox có tích hợp thanh Search
+    selected_search_station = st.sidebar.selectbox(
+        "Tìm & Phóng to đến Trạm:", 
+        options=station_names,
+        help="Gõ tên trạm để tìm kiếm nhanh."
+    )
 
     # ==========================================
-    # XỬ LÝ SỰ KIỆN CLICK BẢNG & CAMERA BẢN ĐỒ
+    # XỬ LÝ SỰ KIỆN CLICK & QUẢN LÝ CAMERA BẢN ĐỒ
     # ==========================================
-    # 1. Khởi tạo trạng thái bản đồ mặc định (nếu chưa có)
     if 'map_state' not in st.session_state:
         st.session_state.map_state = {'lon': 106.7009, 'lat': 10.7769, 'zoom': 11.5}
 
-    # 2. Đọc sự kiện click từ bảng Insights (được gán key="cluster_table" ở dưới)
+    # Dùng cờ (flag) để xác định xem Camera có đang bị ép Zoom vào đâu không
+    is_zoomed = False
+
+    # ƯU TIÊN 1: Người dùng click vào bảng Cụm Kẹt Xe (Hotspot Table)
     if not cluster_centers.empty and 'cluster_table' in st.session_state:
         selected_rows = st.session_state.cluster_table['selection']['rows']
         if len(selected_rows) > 0:
-            # Lấy index của dòng được click
             selected_idx = selected_rows[0]
-            # Lấy thông tin cụm kẹt xe tương ứng từ DataFrame gốc
             selected_cluster = cluster_centers.iloc[selected_idx]
-            
-            # Cập nhật camera zoom thẳng vào tâm chấn
             st.session_state.map_state = {
                 'lon': float(selected_cluster['x']),
                 'lat': float(selected_cluster['y']),
-                'zoom': 15.5 # Zoom sát vào đường (có thể tùy chỉnh)
+                'zoom': 16.0 # Zoom cận cảnh vào điểm kẹt
             }
-        else:
-            # Nếu người dùng bỏ click, reset camera về toàn thành phố
-            st.session_state.map_state = {'lon': 106.7009, 'lat': 10.7769, 'zoom': 11.5}
+            is_zoomed = True
 
-    
-    
+    # ƯU TIÊN 2: Người dùng dùng thanh Tìm Kiếm Trạm (Và không click vào bảng kẹt xe)
+    if not is_zoomed and selected_search_station != "--- Xem toàn cảnh thành phố ---":
+        # Tìm tọa độ của trạm được chọn
+        station_row = filtered_stations[filtered_stations['Name'] == selected_search_station].iloc[0]
+        st.session_state.map_state = {
+            'lon': float(station_row['x']),
+            'lat': float(station_row['y']),
+            'zoom': 16.5 # Zoom rất sát vào trạm
+        }
+        is_zoomed = True
+
+    # TRƯỜNG HỢP MẶC ĐỊNH: Không chọn gì cả -> Reset về Toàn thành phố
+    if not is_zoomed:
+        st.session_state.map_state = {'lon': 106.7009, 'lat': 10.7769, 'zoom': 11.5}
 
     with tab_hotspot:
-        st.subheader("Bản đồ 'điểm đen' kẹt xe")
+        st.subheader("Bản đồ điểm đen kẹt xe")
         # ==========================================
         # RENDER BẢN ĐỒ
         # ==========================================
@@ -192,13 +226,13 @@ def main():
                 st.warning("Không có dữ liệu kẹt xe thỏa mãn bộ lọc.")
 
     with tab_domino:
-        st.subheader("Dự báo Hướng Lây Lan Kẹt Xe")
+        st.subheader("Dự báo hướng lây lan kẹt xe")
         st.markdown("*Phân tích các mẫu tuần tự: Nếu khu vực A kẹt, khả năng cao khu vực B sẽ kẹt tiếp theo.*")
         
         df_flows = translate_prefixspan_patterns(flow_df, station_df)   
         
         if df_flows.empty:
-            st.warning("⚠️ Không có đủ dữ liệu chuỗi lây lan kẹt xe (Domino) trong khung giờ / tuyến đường / biển số xe bạn đang lọc. Hãy thử nới lỏng bộ lọc (Ví dụ: Giảm Mức độ nghiêm trọng của cụm hoặc mở rộng khoảng thời gian).")
+            st.warning("⚠️ Không có đủ dữ liệu chuỗi lây lan kẹt xe (Domino) trong khung giờ / tuyến đường / biển số xe bạn đang lọc. Hãy thử nới lỏng bộ lọc (Ví dụ: Giảm mức độ xuất hiện của mẫu hoặc mở rộng khoảng thời gian).")
         else:
             # Tạo format bảng hiển thị
             display_flows = df_flows[['Readable_Pattern', 'Frequency']].rename(

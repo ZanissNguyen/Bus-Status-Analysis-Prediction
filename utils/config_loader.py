@@ -21,8 +21,10 @@ import yaml
 # This allows the loader to work identically whether invoked from
 # ``app/main.py``, ``pipelines/bunching.py``, or a Jupyter notebook.
 # ---------------------------------------------------------------------------
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config" / "business_rules.yaml"
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+_DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT,  "config",  "business_rules.yaml")
 
 
 class ConfigLoadError(Exception):
@@ -51,7 +53,7 @@ def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
     """
     path = Path(config_path) if config_path else _DEFAULT_CONFIG_PATH
 
-    if not path.exists():
+    if not os.path.exists(path):
         raise ConfigLoadError(
             f"Configuration file not found: {path}\n"
             "Please ensure 'config/business_rules.yaml' exists in the project root."
