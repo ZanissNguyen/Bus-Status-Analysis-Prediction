@@ -16,13 +16,13 @@ Dữ liệu GPS xe buýt TP.HCM đi qua **3 pipeline tuần tự** trước khi 
 
 | # | Script | Input | Output | Ghi chú |
 |---|--------|-------|--------|---------|
-| 0 | `crawl_bus_station.py` | API eBMS (29 tuyến) | `1_bronze/bus_station.json` | Chạy 1 lần, cần trình duyệt |
-| 1 | `1_bronze.py` | `bus_gps/sub_raw_104→188.json` | `1_bronze/data_raw.parquet` | Gộp 85 file JSON → 1 Parquet |
-| 2 | `2_silver.py` | Output Pipeline 0 + 1 | `2_silver/bus_gps_data.parquet` + `bus_station_data.json` | Làm sạch + gán trạm |
+| 0 | `crawl_bus_station_pipeline.py` | API eBMS (29 tuyến) | `1_bronze/bus_station.json` | Chạy 1 lần, cần trình duyệt |
+| 1 | `bronze_pipeline.py` | `bus_gps/sub_raw_104→188.json` | `1_bronze/data_raw.parquet` | Gộp 85 file JSON → 1 Parquet |
+| 2 | `silver_pipeline.py` | Output Pipeline 0 + 1 | `2_silver/bus_gps_data.parquet` + `bus_station_data.json` | Làm sạch + gán trạm |
 
 ---
 
-## Pipeline 0 — Crawl Trạm (`crawl_bus_station.py`)
+## Pipeline 0 — Crawl Trạm (`crawl_bus_station_pipeline.py`)
 
 **Vấn đề:** API eBMS bị Cloudflare chặn → không gọi `requests` được.
 **Giải pháp:** Dùng `DrissionPage` (headless Chromium) mở trình duyệt thật, rồi `run_js(fetch())` bên trong context đã bypass.
@@ -36,7 +36,7 @@ Dữ liệu GPS xe buýt TP.HCM đi qua **3 pipeline tuần tự** trước khi 
 
 ---
 
-## Pipeline 1 — Bronze (`1_bronze.py`)
+## Pipeline 1 — Bronze (`bronze_pipeline.py`)
 
 **Mục tiêu:** 85 file JSON → 1 file Parquet (nhanh ~10x, nhỏ ~3-5x so với JSON).
 
@@ -51,7 +51,7 @@ Dữ liệu GPS xe buýt TP.HCM đi qua **3 pipeline tuần tự** trước khi 
 
 ---
 
-## Pipeline 2 — Silver (`2_silver.py`)
+## Pipeline 2 — Silver (`silver_pipeline.py`)
 
 **Mục tiêu:** Biến Bronze thô → dataset sạch + gán trạm gần nhất (BallTree).
 
@@ -110,17 +110,17 @@ Dữ liệu GPS xe buýt TP.HCM đi qua **3 pipeline tuần tự** trước khi 
 ## Cách chạy
 
 ```bash
-python pipelines/crawl_bus_station.py   # Bước 0 (1 lần)
-python pipelines/1_bronze.py            # Bước 1
-python pipelines/2_silver.py            # Bước 2
+python -m pipelines.crawl_bus_station_pipeline   # Bước 0 (1 lần)
+python -m pipelines.bronze_pipeline            # Bước 1
+python -m pipelines.silver_pipeline            # Bước 2
 ```
 
 **Lỗi thường gặp:**
 
 | Lỗi | Sửa |
 |-----|-----|
-| `PathNotFoundError: bus_station.json` | Chạy `crawl_bus_station.py` trước |
-| `PathNotFoundError: data_raw.parquet` | Chạy `1_bronze.py` trước |
+| `PathNotFoundError: bus_station.json` | Chạy `crawl_bus_station_pipeline.py` trước |
+| `PathNotFoundError: data_raw.parquet` | Chạy `bronze_pipeline.py` trước |
 | `MemoryError` ở Bronze | Giảm `SCALE` xuống `0.1` |
 | `ConfigLoadError` | Kiểm tra `config/business_rules.yaml` |
 

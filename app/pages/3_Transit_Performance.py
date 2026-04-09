@@ -43,7 +43,7 @@ def load_transit_data():
 @st.cache_data
 def load_domino_rules():
     try:
-        rules_df = pd.read_csv(os.path.join(data_dir, "domino_rules.csv"), encoding="utf-8")
+        rules_df = pd.read_parquet(os.path.join(data_dir, "domino_rules.parquet"), engine='pyarrow')
         return rules_df
     except Exception:
         return pd.DataFrame()
