@@ -21,3 +21,6 @@ hdbscan
 plotly
 pyyaml
 tabulate
+dagster 
+dagster-webserver
+kagglehub

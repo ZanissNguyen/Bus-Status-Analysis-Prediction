@@ -102,10 +102,11 @@ Supplementary data (bus station locations and routes) is crawled from the EBMS A
 | **Storage Format** | Apache Parquet (PyArrow) — *Delta Lake planned* |
 | **Spatial Query** | scikit-learn BallTree (Haversine) |
 | **Machine Learning** | scikit-learn (Linear Regression, Random Forest, Gradient Boosting) |
-| **Data Mining** | mlxtend (FP-Growth / Apriori), PrefixSpan |
+| **Data Mining** | mlxtend (FP-Growth / Apriori), PrefixSpan, HDBSCAN |
 | **Web Crawling** | DrissionPage (Cloudflare bypass) |
-| **Dashboard** | Streamlit |
-| **Containerization** | Docker + Docker Compose |
+| **Dashboard** | Streamlit + Plotly + Folium |
+| **Orchestration** | Dagster (Software-Defined Assets) |
+| **Containerization** | Docker + Docker Compose (auto-pipeline entrypoint) |
 | **Language** | Python 3.10+ |
 
 ---
@@ -115,48 +116,64 @@ Supplementary data (bus station locations and routes) is crawled from the EBMS A
 ```
 Bus-Status-Analysis-Prediction/
 │
-├── data/                           # 🗄️ Data Lake (simulated)
-│   ├── 1_bronze/                   # Raw ingested data
-│   │   ├── data_raw.parquet        #   GPS waypoints (Parquet)
-│   │   └── bus_station.json        #   Crawled bus station data
-│   ├── 2_silver/                   # Cleaned & enriched data
-│   │   ├── bus_gps_data.parquet    #   GPS with nearest station mapped
-│   │   └── bus_station_data.json   #   Cleaned station metadata
-│   └── 3_gold/                     # Purpose-built analytical datasets
-│       ├── ml_gold_data.parquet    #   Features for ML (station pairs, distance, duration)
-│       └── dm_gold_data.parquet    #   Features for Data Mining (trips + inferred routes)
+├── data/                               # 🗄️ Data Lake (simulated)
+│   ├── bus_gps/                        # Raw GPS JSON chunks (sub_raw_*.json)
+│   ├── 1_bronze/                       # Raw ingested data
+│   │   ├── data_raw.parquet            #   GPS waypoints merged from JSON chunks
+│   │   └── bus_station.json            #   Crawled bus station data
+│   ├── 2_silver/                       # Cleaned & enriched data
+│   │   ├── bus_gps_data.parquet        #   GPS with nearest station mapped (BallTree)
+│   │   └── bus_station_data.json       #   Cleaned station metadata
+│   ├── 3_gold/                         # Purpose-built analytical datasets
+│   │   ├── ml_gold_data.parquet        #   Features for ML (station pairs, distance, duration)
+│   │   ├── dm_gold_data.parquet        #   Features for DM (trips + inferred routes)
+│   │   └── inferred_route_data.json    #   Route inference map
+│   ├── bunching.parquet                # Bunching/Gapping analysis results
+│   ├── domino_rules.parquet            # Domino cascade rules
+│   └── black_spot.parquet              # Traffic black spot clusters
 │
-├── pipelines/                      # ⚙️ ETL Scripts
-│   ├── bronze.py                   # JSON → Bronze Parquet ingestion
-│   ├── crawl_bus_station.py        # Web crawler for bus station data (EBMS API)
-│   ├── bronze_to_silver.py         # Cleaning + BallTree station mapping
-│   ├── machine_learning_gold.py    # Silver → Gold (ML feature engineering)
-│   ├── data_mining_gold.py         # Silver → Gold (DM trip segmentation + FP-Growth)
-│   └── utils.py                    # Grid search utilities for trip segmentation threshold
+├── pipelines/                          # ⚙️ ETL Pipeline Scripts
+│   ├── bronze_pipeline.py              # JSON chunks → Bronze Parquet
+│   ├── crawl_bus_station_pipeline.py   # Web crawler for bus stations (EBMS API)
+│   ├── silver_pipeline.py              # Bronze → Silver (cleaning + BallTree mapping)
+│   ├── ml_gold_pipeline.py             # Silver → Gold ML (feature engineering)
+│   ├── dm_gold_pipeline.py             # Silver → Gold DM (FP-Growth + route inference + black spots)
+│   └── bunching_pipeline.py            # Gold DM → Bunching/Gapping analysis
 │
-├── models/                         # 🧠 Trained ML Models
-│   ├── train_ml_model.py           # Training script (3 algorithms)
-│   ├── linear_regression_model.pkl # Trained Linear Regression pipeline
-│   ├── randomforest_model.pkl      # Trained Random Forest pipeline
-│   └── gradientboosting_model.pkl  # Trained Gradient Boosting pipeline
+├── orchestration/                      # 🔀 Dagster Orchestration
+│   └── assets.py                       # Software-Defined Assets DAG
 │
-├── app/                            # 📊 Streamlit Dashboard
-│   ├── main.py                     # Entry point — KPI dashboard + ML prediction UI
-│   ├── pages/
-│   │   ├── 1_predict_duration.py   # (Planned) Dedicated prediction page
-│   │   └── 2_route_insights.py     # (Planned) Data mining insights page
-│   └── utils.py                    # Chart & model loading helpers
+├── models/                             # 🧠 Trained ML Models
+│   ├── train_ml_model.py               # Training script (3 algorithms)
+│   ├── randomforest_model.pkl          # Trained Random Forest
+│   ├── gradientboosting_model.pkl      # Trained Gradient Boosting
+│   └── linear_regression_model.pkl     # Trained Linear Regression
 │
-├── notebook/                       # 📓 Jupyter Notebooks (Exploration)
-│   ├── model.ipynb                 # ML model experimentation
-│   ├── preprocessing_modifier.ipynb# Data preprocessing exploration
-│   └── evaluate_threshold.ipynb    # Trip segmentation threshold evaluation
+├── app/                                # 📊 Streamlit Dashboard
+│   ├── Dashboard.py                    # Entry point — KPI overview + Driver profiling
+│   ├── helpers.py                      # Shared helper functions
+│   └── pages/
+│       ├── 1_Predict_Duration.py       # ML travel-time prediction
+│       ├── 2_Black_Spot.py             # Traffic black spot map (HDBSCAN)
+│       └── 3_Transit_Performance.py    # Bunching/Gapping performance analysis
 │
-├── Dockerfile                      # Python 3.10-slim container config
-├── docker-compose.yml              # Single-service orchestration
-├── requirements.txt                # Python dependencies
-├── vehicle_route_mapping.csv       # Vehicle ↔ Route reference mapping
-└── project_structure.md            # Original project structure doc (Vietnamese)
+├── config/
+│   └── business_rules.yaml             # Business rule thresholds (KPIs, speed, violations)
+│
+├── utils/                              # 🔧 Shared utilities
+│   └── config_loader.py                # YAML config loader
+│
+├── tests/                              # ✅ Unit Tests
+│
+├── notebook/                           # 📓 Jupyter Notebooks (Exploration)
+│
+├── Dockerfile                          # Python 3.10-slim + auto-pipeline entrypoint
+├── docker-compose.yml                  # Single-service orchestration
+├── entrypoint.sh                       # Auto-pipeline: check assets → run if missing → launch app
+├── .dockerignore                       # Exclude unnecessary files from Docker build
+├── requirements.txt                    # Python dependencies
+├── vehicle_route_mapping.csv           # Vehicle ↔ Route reference mapping
+└── project_structure.md                # Project structure (Vietnamese)
 ```
 
 ---
@@ -188,6 +205,13 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Data Setup
+
+1. **Download the Dataset:** Download the HCMC Bus GPS dataset from [Kaggle](https://www.kaggle.com/datasets/e42c91f126e0df5b66879f9bfcf72d437411e34cf8557bbdbfc446616781ef9c).
+2. **Extract & Move:** Extract all files with the prefix `sub_raw_` (e.g., `sub_raw_104.json`, `sub_raw_105.json`, etc.) and move them into the `data/bus_gps/` directory.
+
+---
+
 ---
 
 ## Pipeline Execution Guide
@@ -196,34 +220,40 @@ Run the pipelines **in order** — each layer depends on the previous one:
 
 ```bash
 # Step 1: Ingest raw GPS JSON files → Bronze layer (Parquet)
-python pipelines/bronze.py
+python -m pipelines.bronze_pipeline
 
 # Step 1b (Optional): Crawl bus station data from EBMS API
-python pipelines/crawl_bus_station.py
+python -m pipelines.crawl_bus_station_pipeline
 
 # Step 2: Clean & enrich Bronze → Silver layer
-python pipelines/bronze_to_silver.py
+python -m pipelines.silver_pipeline
 
 # Step 3a: Feature engineering for ML (Silver → Gold)
-python pipelines/machine_learning_gold.py
+python -m pipelines.ml_gold_pipeline
 
-# Step 3b: Trip segmentation + Route inference for DM (Silver → Gold)
-python pipelines/data_mining_gold.py
+# Step 3b: Trip segmentation + Route inference + Black Spots (Silver → Gold)
+python -m pipelines.dm_gold_pipeline
 
 # Step 4: Train ML models on Gold data
-python models/train_ml_model.py
+python -m models.train_ml_model
+
+# Step 5: Bunching/Gapping analysis
+python -m pipelines.bunching_pipeline
 ```
+
+> **💡 Tip:** When using Docker, the pipeline runs **automatically** if any output assets are missing. See [Docker Deployment](#docker-deployment) for details.
 
 ### Pipeline Details
 
 | Step | Script | Input | Output | Key Operations |
 |------|--------|-------|--------|----------------|
-| 1 | `bronze.py` | `data/bus_gps/*.json` | `data/1_bronze/data_raw.parquet` | JSON parsing, stratified sampling (8 time-bins) |
-| 1b | `crawl_bus_station.py` | EBMS API | `data/1_bronze/bus_station.json` | Cloudflare bypass, station metadata extraction |
-| 2 | `bronze_to_silver.py` | Bronze parquet + station JSON | `data/2_silver/` | Drop dupes, remove unused cols, BallTree nearest-station mapping |
-| 3a | `machine_learning_gold.py` | Silver parquet | `data/3_gold/ml_gold_data.parquet` | Trajectory compression, station-pair generation, Haversine distance, speed calculation |
-| 3b | `data_mining_gold.py` | Silver parquet + station JSON | `data/3_gold/dm_gold_data.parquet` | Time-gap trip segmentation, FP-Growth frequent itemset mining, vehicle-route assignment |
+| 1 | `bronze_pipeline.py` | `data/bus_gps/*.json` | `data/1_bronze/data_raw.parquet` | JSON parsing, stratified sampling (8 time-bins) |
+| 1b | `crawl_bus_station_pipeline.py` | EBMS API | `data/1_bronze/bus_station.json` | Cloudflare bypass, station metadata extraction |
+| 2 | `silver_pipeline.py` | Bronze parquet + station JSON | `data/2_silver/` | Drop dupes, remove unused cols, BallTree nearest-station mapping |
+| 3a | `ml_gold_pipeline.py` | Silver parquet | `data/3_gold/ml_gold_data.parquet` | Trajectory compression, station-pair generation, Haversine distance, speed calculation |
+| 3b | `dm_gold_pipeline.py` | Silver parquet + station JSON | `data/3_gold/dm_gold_data.parquet` | Time-gap trip segmentation, FP-Growth mining, vehicle-route assignment, black spot detection |
 | 4 | `train_ml_model.py` | Gold ML parquet | `models/*.pkl` | Feature engineering (cyclic hour, weekend flag, route avg), train 3 models |
+| 5 | `bunching_pipeline.py` | Gold DM parquet | `data/bunching.parquet`, `data/domino_rules.parquet` | Headway analysis, bunching/gapping detection, domino cascade rules |
 
 ---
 
@@ -278,23 +308,34 @@ The `pipelines/utils.py` module provides a **grid search** over trip-segmentatio
 
 ## Streamlit Dashboard
 
-The interactive dashboard provides two main views:
+The interactive dashboard provides C-level operational insights across **4 views**:
 
-### 📊 Management Dashboard
-- **KPI Cards:** Total trips, average distance, average duration
-- **Trip distribution by hour** (bar chart)
-- **Distance vs. Duration scatter plot** (outlier detection)
-- **Raw data table viewer**
+### 📊 Operational Dashboard (`Dashboard.py`)
+- **5 KPI Cards:** Service health %, Bunching+Gapping %, Trip count, Avg headway, Safe driver %
+- **Operational Risk Trends:** Stacked bar chart of bottleneck/bunching/gapping by hour
+- **Network Performance:** Speed trends and station dwell time analysis
+- **Deep-Dive Tabs:** Route rankings, station-pair speed heatmap, station error table, driver profiling
+- **Global Filters:** Multi-route and date range filtering
 
-### 🤖 ML Travel-Time Prediction
-- Input form for departure hour, minute, weekday, weekend status, and distance
-- Predicts travel duration using the trained ML model
+### 🤖 Predict Duration (`1_Predict_Duration.py`)
+- Input form for departure details and distance
+- Predicts travel duration using trained ML models (RF, GB, LR)
 - Fallback formula when no `.pkl` model is available
+
+### 🔴 Black Spot Map (`2_Black_Spot.py`)
+- Interactive Folium map of traffic black spots
+- HDBSCAN clustering to identify dangerous zones
+- Drill-down by route and area
+
+### 🚌 Transit Performance (`3_Transit_Performance.py`)
+- Bunching/Gapping analysis per route and station
+- Service reliability metrics and trends
+- Domino cascade rule visualization
 
 ### Running the Dashboard
 
 ```bash
-streamlit run app/main.py
+streamlit run app/Dashboard.py
 ```
 
 The dashboard will be available at `http://localhost:8501`.
@@ -303,21 +344,39 @@ The dashboard will be available at `http://localhost:8501`.
 
 ## Docker Deployment
 
+The Docker setup features **automatic pipeline execution** — when you run the container, it checks if all processed data assets exist. If any are missing, the pipeline runs automatically before launching the dashboard.
+
 ```bash
-# Build and start the container
+# Build and start (first run: pipeline auto-executes, subsequent runs: instant)
 docker-compose up --build
 
 # Access the dashboard
 # http://localhost:8501
 ```
 
-The Docker setup uses `python:3.10-slim`, mounts the project directory for live-reload during development, and exposes port `8501` for Streamlit.
+### How It Works
+
+The `entrypoint.sh` script checks **13 critical asset files** across the data pipeline:
+
+| Category | Assets Checked |
+|----------|----------------|
+| Bronze | `data_raw.parquet`, `bus_station.json` |
+| Silver | `bus_gps_data.parquet`, `bus_station_data.json` |
+| Gold | `ml_gold_data.parquet`, `dm_gold_data.parquet`, `inferred_route_data.json` |
+| Analysis | `bunching.parquet`, `domino_rules.parquet`, `black_spot.parquet` |
+| Models | `randomforest_model.pkl`, `gradientboosting_model.pkl`, `linear_regression_model.pkl` |
+
+- **If ALL assets exist** → Pipeline is skipped, Streamlit launches immediately
+- **If ANY asset is missing** → Only the required pipeline stages run (each stage is independently skippable)
+- **Data persists** on host disk via volume mount (`.:/app`), so assets survive container restarts
+
+> **⚠️ Note:** The crawl pipeline (`crawl_bus_station_pipeline.py`) requires a Chromium browser via DrissionPage, which cannot run inside the Docker container. Make sure `data/1_bronze/bus_station.json` is present before building.
 
 ---
 
 ## Current Status & Roadmap
 
-### ✅ Completed (Prototype — Gold Layer)
+### ✅ Completed
 
 - [x] Bronze → Silver → Gold ETL pipeline (Medallion Architecture)
 - [x] Bus station data web crawler (EBMS API + Cloudflare bypass)
@@ -326,19 +385,18 @@ The Docker setup uses `python:3.10-slim`, mounts the project directory for live-
 - [x] Travel duration prediction with 3 regression models
 - [x] FP-Growth route inference from GPS traces
 - [x] Trip segmentation with configurable time-gap threshold
-- [x] Docker containerization
-
-### 🔄 In Progress
-
-- [ ] Streamlit dashboard (basic DM + ML prediction UI)
-- [ ] Data Mining for C-levels recommender system
-- [ ] Connect trained ML models to Streamlit (currently uses mock data/fallback)
-- [ ] Implement dedicated Streamlit pages (`1_predict_duration.py`, `2_route_insights.py`)
+- [x] Bunching/Gapping analysis with domino cascade rules
+- [x] Traffic black spot detection (HDBSCAN clustering)
+- [x] Dagster orchestration (Software-Defined Assets DAG)
+- [x] Streamlit Operational Dashboard (4 pages: KPI, Prediction, Black Spot, Transit Performance)
+- [x] Driver profiling with hard-rule classification (Safe/Violator/Speedster/Reckless)
+- [x] Configurable business rules via `config/business_rules.yaml`
+- [x] Docker auto-pipeline deployment (entrypoint checks assets → runs pipeline if missing)
+- [x] Unit tests for Gold layer refactoring
 
 ### 🗺️ Future Roadmap
 
 - [ ] **Delta Lake integration** — Replace Parquet files with Delta tables for ACID transactions and time-travel
-- [ ] **Data Orchestration** — Adopt Dagster to automate the Medallion pipeline (Bronze → Silver → Gold) using Software-Defined Assets and to visualize end-to-end data lineage.
 - [ ] **Real-time data ingestion** — Stream GPS data instead of batch processing static files
 - [ ] **Real Data Lakehouse** — Upgrade architecture with proper storage layer (Delta Lake / Apache Iceberg)
 - [ ] **Advanced ML models** — Explore deep learning (LSTM/Transformer) for sequence-based prediction
