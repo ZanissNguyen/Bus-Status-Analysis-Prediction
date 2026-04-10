@@ -54,7 +54,7 @@ def prepare_ml_data(silver_df):
     
     # 2.2. Nén các điểm lặp liên tiếp tại cùng 1 trạm (chỉ giữ điểm gần nhất)
     is_new_block = (df_ml['current_station'] != df_ml['current_station'].shift(1)) | \
-                   (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
+                    (df_ml['vehicle'] != df_ml['vehicle'].shift(1))
 
     df_ml['block_id'] = is_new_block.cumsum()
     idx_min_distance = df_ml.groupby('block_id')['station_distance'].idxmin()
@@ -104,7 +104,7 @@ def prepare_ml_data(silver_df):
     logger.info("Đang trích xuất Thuộc tính Thời gian (Datetime Features)...")
     # TỐI ƯU: Sử dụng thuộc tính .dt của Pandas siêu tốc thay vì datetime.strptime
     start_dt = pd.to_datetime(df_compressed['realtime'], format="%d-%m-%Y %H:%M:%S")
-    end_dt = pd.to_datetime(df_compressed['end_time_unix'], unit='s')
+    end_dt = pd.to_datetime(df_compressed['end_time_unix'], unit='s') + pd.Timedelta(hours=7)
 
     df_compressed['hour'] = start_dt.dt.hour
     df_compressed['week day'] = start_dt.dt.dayofweek
@@ -115,23 +115,32 @@ def prepare_ml_data(silver_df):
     logger.info("Bắt đầu làm sạch cuối cùng (Final Filtering)...")
     # Áp dụng các bộ lọc
     df_final = df_compressed[
-        is_same_day & 
-        (df_compressed['distance (m)'] > 100) &  # logic lọc khoảng cách quá ngắn
-        (df_compressed['duration (s)'] > 10)     # Lọc các dòng bị lỗi thời gian di chuyển siêu nhanh
+        is_same_day &
+        (df_compressed["distance (m)"] <= 3000) & 
+        (df_compressed["distance (m)"] > 100) & 
+        (df_compressed["duration (s)"] <= 1800) & 
+        (df_compressed['duration (s)'] > 10)
     ].copy()
 
     # Đổi tên cột cho chuẩn
-    df_final = df_final.rename(columns={'current_station': 'start station'})
+    df_final = df_final.rename(columns={'current station': 'start station'})
     
+    df_final["route"] = df_final["start station"] + "_" + df_final["end station"]
+
+    # Preprocessing numerical feature 
+    df_final["weekend"] = (df_final["week day"]>=5).astype(int)
+    df_final["hour_sin"] = np.sin(2*np.pi*df_final["hour"]/24)
+    df_final["hour_cos"] = np.cos(2*np.pi*df_final["hour"]/24)
+
     # Chỉ giữ lại các cột cần thiết cho Machine Learning
     final_columns = [
-        'start station', 'end station', 'hour', 'week day', 
+        'start station', 'end station', 'route', 'hour_sin', "hour_cos", 'weekend', 
         'distance (m)', 'duration (s)'
     ]
-    
     result_df = df_final[final_columns]
     
-    logger.info(f"Kích thước Dataset cuối cùng: {len(result_df)}")
+    print(f"Kích thước Dataset cuối cùng: {len(result_df)}")
+    print(result_df.head())
     return result_df
 
 def main():

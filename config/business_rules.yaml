@@ -26,7 +26,7 @@ silver_layer_max_distance_m: 1000
 # Distance threshold (meters) for black-spot / jam detection.
 # Points with station_distance > this AND low speed are considered "stuck in traffic"
 # (as opposed to being stopped at a station).
-jam_far_from_station_m: 50
+jam_far_from_station_m: 100
 
 # Upper event-radius (meters) for association-rule mining.
 # Only door-open events within this radius are fed into FP-Growth.
@@ -53,11 +53,9 @@ night_break_headway_mins: 180.0
 new_session_gap_sec: 600
 
 # Trip-splitting gap (seconds) for the Gold data-mining pipeline.
-trip_split_max_gap_sec: 4200
+trip_split_max_gap_sec: 1800
 
-# On-time performance tolerance (minutes). Allowed deviation from schedule
-# before a trip is considered "late" or "early".
-on_time_performance_tolerance_mins: 5
+
 
 # ------------------------------------------------------------------------------
 # 3. SPEED THRESHOLDS
@@ -130,7 +128,7 @@ geo_bounds:
 earth_radius_m: 6371000.0
 
 # FP-Growth threshold to prevent memory explosion
-fpgrowth_explosion_threshold: 20
+fpgrowth_explosion_threshold: 15
 
 # Route Inference thresholds
 min_trips_per_segment: 2
@@ -141,3 +139,4 @@ min_stations_per_trip: 2
 # Minimum number of core stations to be considered a valid infered route
 core_stations_min_count: 2
 
+trip_split_max_idle_sec: 7200
