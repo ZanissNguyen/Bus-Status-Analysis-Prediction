@@ -1,4 +1,5 @@
 import json
+from datetime import time
 
 import streamlit as st
 import pandas as pd
@@ -120,17 +121,17 @@ def get_average(start_station, end_station, historical_data):
 # LUỒNG RENDER UI CHÍNH
 # ==========================================
 def main():
-    st.title("🤖 AI Transit Prediction: Dự Báo Thời Gian Tuyến")
-    st.markdown("*Lựa chọn chặng đi và khung giờ mong muốn, Hệ thống Machine Learning (3 Mô Hình) sẽ ước lượng rủi ro bị kẹt xe vào khoảng thời gian đó và đưa ra lượng phút di chuyển thực tế nhất.*")
+    st.title("🤖 Dự báo thời gian di chuyển")
+    st.markdown("*Lựa chọn chặng đi và khung giờ mong muốn, Hệ thống Machine Learning (3 Mô Hình) sẽ ước lượng và đưa ra thời gian di chuyển thực tế nhất.*")
     
     # 1. Tải trọng tải ngầm
-    with st.spinner("Đang tải các Neural Nodes và Nạp Trọng số Mô Hình..."):
+    with st.spinner("Đang tải các mô hình và các thông số..."):
         route_stats = load_ml_params()
         models = load_models()
         historical_data = load_historical_data() # list of dataframe
         
     if route_stats.empty or not models:
-        st.warning("Module AI đang bị lỗi đường truyền (Missing Data/Model files).")
+        st.warning("(Missing Data/Model files).")
         return
         
     st.divider()
@@ -139,47 +140,41 @@ def main():
     col_input, col_result = st.columns([1, 1.5], gap="large")
     
     with col_input:
-        st.subheader("1. 🛠️ Thiết Lập Tham Số Chuyến")
+        st.subheader("🛠️ Thiết lập thông số chuyến đi")
         
         # a. Lọc Dữ liệu Tuyến Tính có chọn lọc (Mapping khống chế)
         start_stations = sorted(route_stats['start station'].unique())
-        selected_start = st.selectbox("📍 Chọn Trạm Xuất Phát (Start Station):", options=sorted(start_stations))
+        selected_start = st.selectbox("📍 Trạm xuất phát (Start Station):", options=sorted(start_stations))
         
         # Chỉ những bến nào tiếp nối được từ bến này mới được hiện (Tôn trọng Flow thật)
         end_stations = sorted(route_stats['end station'].unique())
         valid_ends = route_stats[route_stats['start station'] == selected_start]['end station'].unique()
-        selected_end = st.selectbox("🎯 Chọn Trạm Bạn Muốn Đi Tới (End Station):", options=sorted(valid_ends))
+        selected_end = st.selectbox("🎯 Trạm bạn muốn đi tới (End Station):", options=sorted(valid_ends))
         
         st.markdown("---")
         
-        # b. Khung Thời Gian Gõ vào dạng UX Slider
-        st.markdown("**⏰ Khung Giờ Chuyến Đi (Dự kiến):**")
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            hour = st.slider("Giờ (Hour):", min_value=5, max_value=21, value=7)
-        with col_t2:
-            minute = st.slider("Phút (Miuntes):", min_value=0, max_value=59, value=30, step=5)
+        # b. Khung Thời Gian Chọn (UX Thân thiện hơn)
+        selected_time = st.time_input("⏰ (Dự kiến) Giờ khởi hành:", value="now")
+        hour = selected_time.hour
+        minute = selected_time.minute
             
         float_hour = hour + (minute / 60.0)
         
         # c. Input Boolean cờ check cuối tuần
-        is_weekend_checkbox = st.checkbox("🎉 Chạy xe vào Ngày Nghỉ Cuối Tuần (T7, CN)?")
+        is_weekend_checkbox = st.checkbox("Đi vào cuối tuần (T7, CN)?")
         
         # d. Rà lại CSDL truy xuất Metric để Input cho Model
         avg_dur, avg_dist = get_average(selected_start, selected_end, historical_data)
             
-        st.info(f"📏 **Thống kê Lịch sử Chặng Này:**\n- Khoảng cách Mạng Lưới: **{avg_dist:.0f} Mét**\n- TG đi lý thuyết (0 kẹt xe): **{int(avg_dur//60)}p {int(avg_dur%60)}s**")
+        st.info(f"**Thống kê lịch sử:**\n- Khoảng cách: **{avg_dist:.0f} Mét**\n- TG đi lý thuyết: **{int(avg_dur//60)}p {int(avg_dur%60)}s**")
         
         st.markdown("<br/>", unsafe_allow_html=True)
-        predict_btn = st.button("🚀 KÍCH HOẠT NHÂN THẦN KINH DỰ ĐOÁN", width='content', type="primary")
+        predict_btn = st.button("DỰ ĐOÁN", width='content', type="primary")
 
     with col_result:
-        st.subheader("2. 📊 Bảng Báo Cáo Kẹt Xe Lượng Tử")
+        st.subheader("📊 Bảng báo cáo")
         
         if predict_btn:
-            # ==========================================
-            # CHẾ SINH FEATURE ENGINEERING GIỐNG HỆT TRAIN.PY
-            # ==========================================
             features = {
                 "start station": [selected_start],
                 "end station": [selected_end],
@@ -209,7 +204,7 @@ def main():
                         return f"{m}p {s}s"
                     return f"{s}s"
                     
-                st.success("🧠 Khởi chạy suy luận thành công. Hệ thống tiến hành so sánh đối chiếu chéo giữa 3 Thuật Toán:")
+                st.success("🧠 Khởi chạy thành công. Hệ thống tiến hành so sánh đối chiếu giữa 3 thuật toán:")
                 
                 c1, c2, c3 = st.columns(3)
                 
@@ -242,7 +237,7 @@ def main():
                 
                 st.markdown("---")
                 # Biểu diễn trực quan Barchart 
-                st.markdown("### 🔍 Phân tích so sánh Độ lệch Chuẩn (Deviation)")
+                st.markdown("### 🔍 Phân tích so sánh")
                 
                 chart_data = pd.DataFrame({
                     "AI Model": list(res.keys()),
@@ -250,7 +245,7 @@ def main():
                 })
                 # Bơm thêm Base Lịch sử vào biểu đồ để thấy Rõ model nào đang thổi phồng Kẹt xe cao nhất
                 baseline_df = pd.DataFrame([{
-                    "AI Model": "Lý thuyết Quá Khứ (AVG)", 
+                    "AI Model": "Dữ liệu lịch sử (avg)", 
                     "Thời gian di chuyển ước tính (s)": avg_dur
                 }])
                 chart_data = pd.concat([chart_data, baseline_df], ignore_index=True)

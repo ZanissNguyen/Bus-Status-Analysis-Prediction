@@ -6,11 +6,13 @@
 </p>
 
 ---
-## Team members:
-- Nguyen Thanh Phat
-- Tran Do Duc Phat
-- Nguyen Mien Phu
 
+## 👥 The Team
+
+* **Nguyễn Thành Phát**:  2312593
+* **Trần Đỗ Đức Phát**: 2312596
+* **Nguyễn Miên Phú**: 2312658
+---
 
 ## 📋 Table of Contents
 
@@ -45,33 +47,9 @@ This project processes **HCMC Bus GPS waypoint data** through a simulated **Data
 
 The project follows the **Medallion Architecture** pattern:
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         DATA LAKEHOUSE (Simulated)                          │
-│                                                                             │
-│  ┌───────────────┐    ┌───────────────────┐    ┌────────────────────────┐   │
-│  │   🥉 BRONZE  │───▶│    🥈 SILVER     │───▶│      🥇 GOLD          │   │
-│  │  Raw GPS Data │    │ Cleaned + Station │    │ ML Features / DM Data  │   │
-│  │  (.parquet)   │    │ Mapping (.parquet)│    │     (.parquet)         │   │
-│  └───────────────┘    └───────────────────┘    └──────────┬─────────────┘   │
-│                                                           │                 │
-│         Web Crawler ──▶ Bus Station Data (.json)         │                 │
-└───────────────────────────────────────────────────────────┼─────────────────┘
-                                                            │
-                            ┌───────────────────────────────┼────────┐
-                            │                               ▼        │
-                            │  ┌──────────────────┐  ┌─────┼┼─────┐  │
-                            │  │ 🤖 ML Models    │  │ ⛏️ Data    │  │
-                            │  │ (Train & Predict)│  │  Mining    │  │
-                            │  └────────┬─────────┘  └─────┬──────┘  │
-                            │           │                  │         │
-                            │           ▼                 ▼          │
-                            │    ┌─────────────────────────────┐     │
-                            │    │  📊 Streamlit Dashboard    │     │
-                            │    │  (C-Level / Management UI)  │     │
-                            │    └─────────────────────────────┘     │
-                            └────────────────────────────────────────┘
-```
+![Pipeline](images/pipeline.jpg)
+
+---
 
 ### Data Flow
 
