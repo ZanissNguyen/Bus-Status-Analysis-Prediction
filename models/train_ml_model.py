@@ -26,7 +26,6 @@ def load_data():
 
     df = pd.read_parquet("./data/3_gold/ml_gold_data.parquet", engine="pyarrow")
 
-    print(df.head(5))
     return df
 
 # Preprocess pre-historical feature after split for avoid Data Leakage
@@ -93,27 +92,22 @@ def routewise_normalized_error(X_test, Y_test, y_pred):
         "y_pred": np.asarray(y_pred)
     })
 
-    route_scores = []
+    df_eval["abs_err"] = (df_eval["y_true"] - df_eval["y_pred"]).abs()
+    df_eval["sq_err"] = (df_eval["y_true"] - df_eval["y_pred"]) ** 2
 
-    for _, group in df_eval.groupby("route"):
+    # Vectorized aggregation grouped by 'route'
+    route_stats = df_eval.groupby("route").agg(
+        mean_duration=("y_true", "mean"),
+        mean_abs_err=("abs_err", "mean"),
+        mean_sq_err=("sq_err", "mean")
+    )
 
-        err = group["y_true"] - group["y_pred"]
-        mean_duration = group["y_true"].mean()
+    denom = route_stats["mean_duration"] + 1e-8
 
-        # avoid division by zero
-        denom = mean_duration + 1e-8
+    nmae_r = route_stats["mean_abs_err"] / denom
+    nrmse_r = np.sqrt(route_stats["mean_sq_err"]) / denom
 
-        nmae_r = np.mean(np.abs(err)) / denom
-        nrmse_r = np.sqrt(np.mean(err**2)) / denom
-
-        route_scores.append((nmae_r, nrmse_r))
-
-    route_scores = np.array(route_scores)
-
-    final_nmae = route_scores[:, 0].mean()
-    final_nrmse = route_scores[:, 1].mean()
-
-    return final_nmae, final_nrmse
+    return nmae_r.mean(), nrmse_r.mean()
 
 def map_original_feature(name):
     if "start station" in name:
@@ -169,7 +163,9 @@ def importances_show(pipeline, name):
     plt.show()
 
 def feature_engineering_and_train_model(df):
-        
+    
+    os.makedirs("./models", exist_ok=True)
+
     def train_and_test_linear_model(preprocessor, X_train, X_test, Y_train, Y_test):
         print("Begin train and test linear regression model")
         linear_model = Pipeline([
@@ -326,9 +322,10 @@ def feature_engineering_and_train_model(df):
     # Split data and build pre-historical feature
     split_idx = int(len(df)*0.8)
 
-    train_df = df.iloc[:split_idx]
-    test_df  = df.iloc[split_idx:]
-
+    train_df = df.iloc[:split_idx].copy()
+    test_df  = df.iloc[split_idx:].copy()
+    if not os.path.exists("./data/3_gold/historical"):
+        os.makedirs("./data/3_gold/historical")
     his = "./data/3_gold/historical/"
     train_df, test_df, global_avg, global_distance = add_historical_features(train_df, test_df)
     # save prehistorical data for deploying
@@ -355,7 +352,7 @@ def feature_engineering_and_train_model(df):
     rf_result = train_and_test_rf_model(rf_gb_preprocessor, X_train, X_test, Y_train, Y_test, evaluation_curve=False)
     gb_result = train_and_test_gb_model(rf_gb_preprocessor, X_train, X_test, Y_train, Y_test, evaluation_curve=False)
 
-    #Comparison
+    Comparison
     result = [lr_result, rf_result, gb_result]
     result_df = pd.DataFrame(
         result,

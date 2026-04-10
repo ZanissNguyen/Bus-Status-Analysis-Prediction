@@ -123,7 +123,7 @@ def prepare_ml_data(silver_df):
     ].copy()
 
     # Đổi tên cột cho chuẩn
-    df_final = df_final.rename(columns={'current station': 'start station'})
+    df_final = df_final.rename(columns={'current_station': 'start station'})
     
     df_final["route"] = df_final["start station"] + "_" + df_final["end station"]
 
