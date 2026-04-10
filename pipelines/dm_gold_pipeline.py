@@ -198,7 +198,7 @@ def create_stops_from_silver(df):
     and Inbound. We deduplicate by Name, merging the Routes lists from all
     directions so the FP-Growth route dictionary remains correct.
     """
-    df = df[['Name', 'Routes']].copy()
+    df = df[['Name', 'Routes', 'is_terminal']].copy()
     
     valid_routes = {"70-5", "61-7", "156D", "156V", "169D", "169V", "163D", "163V", "1", "164D", "164V", "57", "167D", "167V", "152", "27", "148", "55", "151", "30", "122", "3", "72", "45", "88", "32", "91", "93", "24", "50", "90"}
     
@@ -212,17 +212,19 @@ def create_stops_from_silver(df):
 
     # Deduplicate: same station may appear in both Outbound & Inbound.
     # Group by Name and merge unique routes from all directions.
-    df = df.groupby('Name', as_index=False).agg(
-        {'Routes': lambda vals: ','.join(sorted(set(
+    df = df.groupby('Name', as_index=False).agg({
+        'Routes': lambda vals: ','.join(sorted(set(
             r.strip() for v in vals for r in v.split(',') if r.strip()
-        )))}
-    )
+        ))),
+        'is_terminal': 'max'
+    })
 
     return df
 
 def infer_segment_route(transactions, route_dict, min_support, vehicle, start_trip, end_trip):
     """
     Helper function: Run FP-Growth and Route Matching for a segment of trips.
+    - Cải tiến: Áp dụng hệ số IRF (Inverse Route Frequency) để xử lý Vấn đề "Overlapping Routes" (Tuyến trùng lấp)
     """
     if len(transactions) < _config['min_trips_per_segment']:
         return None
@@ -257,22 +259,38 @@ def infer_segment_route(transactions, route_dict, min_support, vehicle, start_tr
     if len(core_stations) < _config['core_stations_min_count']:
         return None
 
-    # Khớp tuyến với từ điển
-    candidate_routes = []
+    # -------------------------------------------------------------
+    # Khớp tuyến với từ điển - BẦU CHỌN THEO SỐ ĐÔNG CÓ TRỌNG SỐ IRF
+    # Giải quyết "Vấn đề Tuyến Trùng Lấp" (Overlapping Routes):
+    # Dùng IRF (Inverse Route Frequency) giống TF-IDF. 
+    # Trạm Hubs (như Bến xe) nghẹt xe -> ít có ý nghĩa định danh -> điểm thấp.
+    # Trạm độc quyền (ngõ hẻm) -> tính định danh cao -> điểm bầu chọn cực cao.
+    # -------------------------------------------------------------
+    route_scores = Counter()
     for station in core_stations:
         routes_list = route_dict.get(station, [])
-        candidate_routes.extend(routes_list)
+        if not routes_list:
+            continue
+            
+        # Điểm thưởng IRF (Steep Curve):
+        # Nếu trạm chỉ phục vụ duy nhất 1 tuyến đó -> weight = 10.0 (Đặc trưng tuyệt đối)
+        # Nếu 1 trạm phục vụ 10 tuyến -> weight = 1.0
+        # Cực kỳ trừng phạt (nerf) các trạm Hubs và đánh giá cao trạm Độc quyền.
+        irf_weight = 10.0 / len(routes_list)
+        
+        for route in routes_list:
+            route_scores[route] += irf_weight
 
-    if not candidate_routes:
+    if not route_scores:
         return None
 
-    # Logic majority voting
-    counts = Counter(candidate_routes)
-    max_count = counts.most_common(1)[0][1]
-    most_common_routes = [route for route, count in counts.items() if count == max_count]
+    # Tìm số điểm cao nhất
+    max_score = max(route_scores.values())
+    # Lọc các tuyến có điểm bằng max_score (chênh lệch nhỏ do float)
+    most_common_routes = [route for route, score in route_scores.items() if abs(score - max_score) < 1e-6]
     
     if len(most_common_routes) > 1:
-        return None  # Không chắc chắn được tuyến nào vì có nhiều tuyến có cùng số phiếu bầu
+        return None  # Không chắc chắn được tuyến nào nếu còn hòa điểm
         
     return {
         'vehicle': vehicle,

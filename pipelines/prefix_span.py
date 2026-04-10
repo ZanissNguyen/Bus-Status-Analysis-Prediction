@@ -27,17 +27,26 @@ logger = get_logger("prefixspan_pipeline")
 # ==============================================================================
 # 1. CORE MINING (Tái sử dụng logic đã tối ưu từ helpers.py)
 # ==============================================================================
-def sequential_mining(jam_df, min_support=20):
+def sequential_mining(jam_df, min_support=20, max_pattern_len=5, max_seq_len=20):
     """
     Khai phá chuỗi kẹt xe tuần tự (Sequential Pattern Mining) bằng PrefixSpan.
-    Tối ưu: Vectorized dedup, không mutate DataFrame gốc, lọc chuỗi ngắn trước khi mining.
+    
+    Tối ưu tốc độ:
+    - Vectorized dedup trước groupby
+    - Loại bỏ zone hiếm (không bao giờ đạt min_support)
+    - Cắt ngọn chuỗi dài (giảm bùng nổ tổ hợp)
+    - Giới hạn maxlen trên PrefixSpan
+    
+    Parameters:
+        max_pattern_len: Chiều dài pattern tối đa cần tìm (mặc định 5, chuỗi domino > 5 trạm hiếm khi actionable)
+        max_seq_len: Cắt ngọn chuỗi input dài hơn con số này (giảm search space mũ)
     """
     if len(jam_df) == 0:
         return pd.DataFrame(columns=['Jam_Pattern', 'Frequency'])
 
     df = jam_df[['x', 'y', 'realtime', 'vehicle']].copy()
 
-    # 1. Rời rạc hóa Không gian (Lưới Grid ~ 100m x 100m)
+    # 1. Rời rạc hóa Không gian (Lưới Grid ~ 110m x 110m)
     df['zone_id'] = "Zone_" + df['y'].round(3).astype(str) + "_" + df['x'].round(3).astype(str)
 
     # 2. Rời rạc hóa Thời gian
@@ -53,17 +62,30 @@ def sequential_mining(jam_df, min_support=20):
     )
     df = df[~is_same_as_prev]
 
-    # 4. Xây dựng CSDL Chuỗi & Lọc chuỗi ngắn
+    # 4. TỐI ƯU: Loại bỏ zone hiếm (xuất hiện < min_support lần trong toàn bộ CSDL)
+    #    Một zone chỉ xuất hiện 5 lần không bao giờ nằm trong pattern có support >= 20.
+    #    Loại sớm giúp giảm số unique items → PrefixSpan nhanh hơn đáng kể.
+    zone_counts = df['zone_id'].value_counts()
+    frequent_zones = set(zone_counts[zone_counts >= min_support].index)
+    df = df[df['zone_id'].isin(frequent_zones)]
+    logger.info(f"Giữ lại {len(frequent_zones)} zone phổ biến (loại {len(zone_counts) - len(frequent_zones)} zone hiếm).")
+
+    # 5. Xây dựng CSDL Chuỗi
     sequences = df.groupby(['vehicle', 'date'])['zone_id'].apply(list)
-    clean_sequences = [seq for seq in sequences if len(seq) >= 2]
+    
+    # TỐI ƯU: Lọc chuỗi ngắn + Cắt ngọn chuỗi dài
+    #   Chuỗi 1 zone → không tạo được domino → bỏ
+    #   Chuỗi 100 zone → PrefixSpan phải duyệt C(100,k) subsequences → cắt còn max_seq_len
+    clean_sequences = [seq[:max_seq_len] for seq in sequences if len(seq) >= 2]
 
     if not clean_sequences:
         return pd.DataFrame(columns=['Jam_Pattern', 'Frequency'])
 
-    logger.info(f"PrefixSpan input: {len(clean_sequences)} chuỗi, min_support={min_support}")
+    logger.info(f"PrefixSpan input: {len(clean_sequences)} chuỗi, min_support={min_support}, maxlen={max_pattern_len}")
 
-    # 5. Chạy PrefixSpan
+    # 6. Chạy PrefixSpan với maxlen constraint
     ps = PrefixSpan(clean_sequences)
+    ps.maxlen = max_pattern_len  # Không tìm pattern dài hơn 5 zone (giảm search space theo hàm mũ)
     frequent_patterns = ps.frequent(min_support, closed=True)
 
     if not frequent_patterns:

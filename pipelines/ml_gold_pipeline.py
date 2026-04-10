@@ -99,7 +99,7 @@ def prepare_ml_data(silver_df):
     
     # Tránh chia cho 0 nếu thời gian bằng 0
     df_compressed['duration (s)'] = df_compressed['duration (s)'].replace(0, np.nan)
-    df_compressed['speed'] = (df_compressed['distance (m)'] / df_compressed['duration (s)']) * 3.6
+    # df_compressed['speed'] = (df_compressed['distance (m)'] / df_compressed['duration (s)']) * 3.6
 
     logger.info("Đang trích xuất Thuộc tính Thời gian (Datetime Features)...")
     # TỐI ƯU: Sử dụng thuộc tính .dt của Pandas siêu tốc thay vì datetime.strptime

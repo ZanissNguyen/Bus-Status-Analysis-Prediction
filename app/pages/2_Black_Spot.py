@@ -91,20 +91,23 @@ def main():
         help="Số lượng tín hiệu kẹt xe tối thiểu để công nhận đây là một vùng kẹt xe hợp lệ."
     )
 
-    # PrefixSpan: Ưu tiên dùng kết quả pre-computed từ pipeline batch
-    precomputed_df = load_precomputed_patterns()
-    use_precomputed = precomputed_df is not None
+    # PrefixSpan: Toggle giữa Pre-computed và On-the-fly
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔗 PrefixSpan Engine")
+    use_precomputed = st.sidebar.toggle(
+        "Dùng kết quả đã tính sẵn (Pipeline)",
+        value=True,
+        help="ON = Load kết quả từ file prefixspan_patterns.parquet (nhanh). OFF = Chạy PrefixSpan trực tiếp trên dữ liệu đã lọc (chậm hơn nhưng linh hoạt)."
+    )
 
-    min_support = 20  # Giá trị mặc định
+    min_support = 20
     if not use_precomputed:
-        st.sidebar.subheader("🔗 Cấu hình PrefixSpan (On-the-fly)")
         min_support = st.sidebar.slider(
-            "Tần suất lặp lại tối thiểu",
+            "Tần suất lặp lại tối thiểu (min_support)",
             min_value=5, max_value=100, value=20, step=5,
-            help="Số lần tối thiểu một chuỗi kẹt xe phải lặp lại để được coi là mẫu có ý nghĩa (min_support)."
+            help="Số lần tối thiểu một chuỗi kẹt xe phải lặp lại để được coi là mẫu có ý nghĩa."
         )
-    else:
-        st.sidebar.info("✅ Đang dùng kết quả PrefixSpan đã tính sẵn.")
+        st.sidebar.warning("⚠️ On-the-fly có thể chậm trên dữ liệu lớn.")
 
     # ==========================================
     # ENGINE LỌC DỮ LIỆU
@@ -127,12 +130,16 @@ def main():
     if not cluster_centers.empty:
         cluster_centers = cluster_centers.sort_values(by='Severity', ascending=False).drop_duplicates(subset=['Nearest_Station']).reset_index(drop=True)
     
-    # PrefixSpan: Ưu tiên data pre-computed, fallback sang on-the-fly
+    # PrefixSpan: Load theo chế độ user chọn
     if use_precomputed:
-        flow_df = precomputed_df.copy()
+        precomputed_df = load_precomputed_patterns()
+        flow_df = precomputed_df.copy() if precomputed_df is not None else pd.DataFrame()
+        if flow_df.empty:
+            st.error("File `prefixspan_patterns.parquet` chưa tồn tại. Hãy chạy `python pipelines/prefix_span.py` trước hoặc tắt toggle.")
     else:
-        prefix_df = sequential_mining(filtered_df, min_support=min_support) 
-        flow_df = process_prefixspan_data(prefix_df)
+        with st.spinner("Đang chạy PrefixSpan on-the-fly..."):
+            prefix_df = sequential_mining(filtered_df, min_support=min_support) 
+            flow_df = process_prefixspan_data(prefix_df)
     # Đảm bảo danh sách tuyến được chọn là kiểu chuỗi (string)
     selected_routes_str = [str(r) for r in selected_routes]
 
@@ -251,11 +258,12 @@ def main():
         st.subheader("Dự báo hướng lây lan kẹt xe")
         st.markdown("*Phân tích các mẫu tuần tự: Nếu khu vực A kẹt, khả năng cao khu vực B sẽ kẹt tiếp theo.*")
         
-        # Pre-computed đã có Readable_Pattern, Arc coords sẵn → bỏ qua translate
+        # Pre-computed đã có Readable_Pattern sẵn, on-the-fly cần translate
         if use_precomputed:
             df_flows = flow_df
         else:
-            df_flows = translate_prefixspan_patterns(flow_df, station_df)
+            with st.spinner("Đang ánh xạ Zone → Tên trạm..."):
+                df_flows = translate_prefixspan_patterns(flow_df, station_df)
         
         if df_flows.empty:
             st.warning("⚠️ Không có đủ dữ liệu chuỗi lây lan kẹt xe (Domino) trong khung giờ / tuyến đường / biển số xe bạn đang lọc. Hãy thử nới lỏng bộ lọc (Ví dụ: Giảm mức độ xuất hiện của mẫu hoặc mở rộng khoảng thời gian).")
