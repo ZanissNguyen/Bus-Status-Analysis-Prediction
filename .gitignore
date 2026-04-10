@@ -176,7 +176,7 @@ data/*/*.json
 data/*/*.parquet
 data/*.parquet
 data/*.json
-
+data/3_gold/historical/*.json
 data/bus_gps/*.json
 data/*.json
 *.csv
