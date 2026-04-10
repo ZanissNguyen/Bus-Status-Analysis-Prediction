@@ -182,3 +182,5 @@ data/*.json
 *.csv
 .agents
 *.pdf
+
+.tmp_dagster_home_lewk6a0u

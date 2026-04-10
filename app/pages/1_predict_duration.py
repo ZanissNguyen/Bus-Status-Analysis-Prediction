@@ -1,12 +1,39 @@
+import json
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import os
+import sys
 
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 # ==========================================
 # CẤU HÌNH TRANG CHỦ & CACHE DATA/MODELS
 # ==========================================
 st.set_page_config(page_title="Prediction Dashboard", layout="wide")
+
+@st.cache_data
+def load_historical_data():
+    # return 3 dataframe that from 3 files avg route, avg start, avg end duration for 
+    # fallback strategy.
+    path = "./data/3_gold/historical/"
+    route_file = "avg_route_data.json"
+    start_file = "avg_start_data.json"
+    end_file = "avg_end_data.json"
+    global_file = "global_avg_data.json"
+
+    dfs = []
+
+    for fn in [route_file, start_file, end_file, global_file]:
+        with open(path+fn, "r", encoding="utf-8") as f:
+            dataset = json.load(f)
+            dfs.append(pd.DataFrame(dataset))
+    
+    return dfs
 
 @st.cache_data
 def load_ml_params():
@@ -15,7 +42,7 @@ def load_ml_params():
     Do Model huấn luyện yêu cầu tham số Route_avg_duration và Distance, ta không cho user gõ tay 
     mà lấy tự động từ Metric của những lần kẹt xe trong quá khứ 
     """
-    try:
+    try: # đoạn này xử lý thành load file trong 3_gold, 
         df = pd.read_parquet("./data/3_gold/ml_gold_data.parquet", engine="pyarrow")
         
         # Áp dụng bộ lọc vệ sinh dữ liệu M-Learning y hệt như lúc Train Model (Tránh OOD bias)
@@ -49,6 +76,46 @@ def load_models():
         st.error(f"Không thể load Model Machine Learning. Vui lòng check lại thư mục `./models/`. Lỗi: {e}")
         return {}
 
+# get historical data:
+def get_average(start_station, end_station, historical_data):
+    
+    route_id = start_station + "_" + end_station
+
+    fallbacks = [
+        (
+            historical_data[0],
+            historical_data[0]["route"] == route_id,
+            "avg_route_duration",
+            "avg_route_distance"
+        ),
+        (
+            historical_data[1],
+            historical_data[1]["start station"] == start_station,
+            "avg_start_duration",
+            "avg_start_distance"
+        ),
+        (
+            historical_data[2],
+            historical_data[2]["end station"] == end_station,
+            "avg_end_duration",
+            "avg_end_distance"
+        )
+    ]
+
+    for df, condition, col_dur, col_dis in fallbacks:
+        row = df[condition]
+        if not row.empty:
+            avg_dur = row[col_dur].iloc[0]
+            avg_dist = row[col_dis].iloc[0]
+            break
+
+    # global fallback
+    if avg_dur is None or avg_dist is None:
+        avg_dur = historical_data[3].iloc[0]["avg_duration"]
+        avg_dist = historical_data[3].iloc[0]["avg_distance"]
+
+    return avg_dur, avg_dist
+
 # ==========================================
 # LUỒNG RENDER UI CHÍNH
 # ==========================================
@@ -60,6 +127,7 @@ def main():
     with st.spinner("Đang tải các Neural Nodes và Nạp Trọng số Mô Hình..."):
         route_stats = load_ml_params()
         models = load_models()
+        historical_data = load_historical_data() # list of dataframe
         
     if route_stats.empty or not models:
         st.warning("Module AI đang bị lỗi đường truyền (Missing Data/Model files).")
@@ -75,9 +143,10 @@ def main():
         
         # a. Lọc Dữ liệu Tuyến Tính có chọn lọc (Mapping khống chế)
         start_stations = sorted(route_stats['start station'].unique())
-        selected_start = st.selectbox("📍 Chọn Trạm Xuất Phát (Start Station):", options=start_stations)
+        selected_start = st.selectbox("📍 Chọn Trạm Xuất Phát (Start Station):", options=sorted(start_stations))
         
         # Chỉ những bến nào tiếp nối được từ bến này mới được hiện (Tôn trọng Flow thật)
+        end_stations = sorted(route_stats['end station'].unique())
         valid_ends = route_stats[route_stats['start station'] == selected_start]['end station'].unique()
         selected_end = st.selectbox("🎯 Chọn Trạm Bạn Muốn Đi Tới (End Station):", options=sorted(valid_ends))
         
@@ -87,7 +156,7 @@ def main():
         st.markdown("**⏰ Khung Giờ Chuyến Đi (Dự kiến):**")
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            hour = st.slider("Giờ (Hour):", min_value=0, max_value=23, value=7)
+            hour = st.slider("Giờ (Hour):", min_value=5, max_value=21, value=7)
         with col_t2:
             minute = st.slider("Phút (Miuntes):", min_value=0, max_value=59, value=30, step=5)
             
@@ -97,17 +166,12 @@ def main():
         is_weekend_checkbox = st.checkbox("🎉 Chạy xe vào Ngày Nghỉ Cuối Tuần (T7, CN)?")
         
         # d. Rà lại CSDL truy xuất Metric để Input cho Model
-        row_stat = route_stats[(route_stats['start station'] == selected_start) & (route_stats['end station'] == selected_end)]
-        if not row_stat.empty:
-            avg_dur = row_stat['avg_duration'].values[0]
-            avg_dist = row_stat['avg_distance'].values[0]
-        else:
-            avg_dur, avg_dist = 0.0, 0.0 # Safety lock
+        avg_dur, avg_dist = get_average(selected_start, selected_end, historical_data)
             
         st.info(f"📏 **Thống kê Lịch sử Chặng Này:**\n- Khoảng cách Mạng Lưới: **{avg_dist:.0f} Mét**\n- TG đi lý thuyết (0 kẹt xe): **{int(avg_dur//60)}p {int(avg_dur%60)}s**")
         
         st.markdown("<br/>", unsafe_allow_html=True)
-        predict_btn = st.button("🚀 KÍCH HOẠT NHÂN THẦN KINH DỰ ĐOÁN", use_container_width=True, type="primary")
+        predict_btn = st.button("🚀 KÍCH HOẠT NHÂN THẦN KINH DỰ ĐOÁN", width='content', type="primary")
 
     with col_result:
         st.subheader("2. 📊 Bảng Báo Cáo Kẹt Xe Lượng Tử")
@@ -123,7 +187,7 @@ def main():
                 "weekend": [1 if is_weekend_checkbox else 0],
                 "hour_sin": [np.sin(2 * np.pi * float_hour / 24)],
                 "hour_cos": [np.cos(2 * np.pi * float_hour / 24)],
-                "route_avg_duration": [float(avg_dur)]
+                "avg_route_duration": [float(avg_dur)]
             }
             input_df = pd.DataFrame(features)
             

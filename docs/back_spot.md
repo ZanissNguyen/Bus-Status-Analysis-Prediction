@@ -7,22 +7,22 @@
 ## Tổng quan
 
 ```
-dm_gold_data.parquet ──[pipeline 3.2]──→ black_spot.parquet ──→ [Dashboard 2_Black_Spot.py]
+dm_gold_data.parquet ──[dm_gold_pipeline.py]──→ black_spot.parquet ──→ [Dashboard 2_Black_Spot.py]
                                                                    ├── Tab 1: Bản đồ 3D Hexagon + HDBSCAN
                                                                    └── Tab 2: Arc Map hiệu ứng Domino
 ```
 
 | Thành phần | File | Vai trò |
 |-----------|------|---------|
-| Trích xuất dữ liệu kẹt | `pipelines/3.2_data_mining_gold.py` (hàm `main`, dòng 477-487) | Query 5 điều kiện → `black_spot.parquet` |
+| Trích xuất dữ liệu kẹt | `pipelines/dm_gold_pipeline.py` (hàm `main`) | Query 5 điều kiện → `black_spot.parquet` |
 | Thuật toán phân tích | `app/utils.py` | HDBSCAN, PrefixSpan, Pydeck rendering |
 | Dashboard | `app/pages/2_Black_Spot.py` | UI tương tác 2 tab |
 
 ---
 
-## Phần 1: Trích xuất Black Spot (Pipeline 3.2)
+## Phần 1: Trích xuất Black Spot (dm_gold_pipeline.py)
 
-Ở cuối `main()` của pipeline 3.2, dữ liệu Gold đã gán tuyến được query với **5 điều kiện AND**:
+Ở cuối `main()` của `dm_gold_pipeline.py`, dữ liệu Gold đã gán tuyến được query với **5 điều kiện AND**:
 
 | # | Điều kiện | Ngưỡng | Loại trừ trường hợp |
 |---|-----------|--------|---------------------|
@@ -185,8 +185,8 @@ station_df['Routes'].str.contains(regex)
 ## Cách chạy
 
 ```bash
-# 1. Chạy pipeline 3.2 (sẽ tạo black_spot.parquet cuối cùng)
-python pipelines/3.2_data_mining_gold.py
+# 1. Chạy pipeline (sẽ tạo black_spot.parquet cuối cùng)
+python -m pipelines.dm_gold_pipeline
 
 # 2. Chạy dashboard
 streamlit run app/Dashboard.py

@@ -1,0 +1,41 @@
+# Ignore version control
+.git
+.gitignore
+
+# Ignore Python artifacts
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+
+# Ignore virtual environments
+venv/
+.venv/
+env/
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+
+# Ignore notebooks (not needed for runtime)
+notebook/
+.ipynb_checkpoints/
+
+# Ignore docs
+docs/
+
+# Ignore tests (not needed for runtime)
+tests/
+
+# Ignore dagster temp
+.tmp_dagster_home_*
+
+# Ignore agent configs
+.agents/
+
+# =====================================================
+# DO NOT ignore data/ or models/ — the entrypoint needs
+# to check if assets exist and possibly read raw data
+# =====================================================
