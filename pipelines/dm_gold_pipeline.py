@@ -351,8 +351,10 @@ def infer_route_dynamic_tracking(silver_df, stops_df, min_support=None, drift_th
                 last_trip = trip_id
                 continue
 
-            # TÍNH TOÁN DRIFT (Sự lệch pha): Tỷ lệ trạm của chuyến mới xuất hiện trong Bể nhớ cũ
-            overlap_ratio = len(trip_set.intersection(current_memory_pool)) / len(trip_set)
+            # TÍNH TOÁN DRIFT (Sự lệch pha) bằng Overlap Coefficient (Szymkiewicz-Simpson)
+            # Giúp chống "gãy nhầm" lịch sử khi chuyến mới thu thập có độ dài vượt trội hơn Bể nhớ cũ (Cold start).
+            intersection_size = len(trip_set.intersection(current_memory_pool))
+            overlap_ratio = intersection_size / min(len(trip_set), len(current_memory_pool))
 
             if overlap_ratio < drift_threshold:
                 # -----------------------------------------------------------------
@@ -572,6 +574,7 @@ def main():
     ).copy()
     bs_path = os.path.join(_PROJECT_ROOT, "data", "black_spot.parquet")
     jam_df.to_parquet(bs_path, engine="pyarrow", index=False) 
-    logger.info("Đã lưu file black_spot thành công!")  
+    logger.info("Đã lưu file black_spot thành công!")
+      
 if __name__ == "__main__":
     main()
