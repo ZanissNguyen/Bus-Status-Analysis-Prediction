@@ -186,6 +186,17 @@ def translate_zones_to_stations(df_flows, station_df):
     # 5. Loại bỏ pattern chỉ còn 1 trạm sau dedupe
     df_flows = df_flows[df_flows['Readable_Pattern'].str.contains('➡️')].copy()
 
+    before = len(df_flows)
+    df_flows = (
+        df_flows
+        .sort_values('Frequency', ascending=False)
+        .drop_duplicates(subset=['Readable_Pattern'], keep='first')
+        .reset_index(drop=True)
+    )
+    after = len(df_flows)
+    if before != after:
+        logger.info(f"Dedup Readable_Pattern: {before} → {after} patterns (loại {before - after} trùng lặp).")
+
     return df_flows
 
 

@@ -1,17 +1,28 @@
 <p align="center">
   <h1 align="center">🚌 HCMC Bus Status Analysis & Prediction</h1>
   <p align="center">
-    A Data Lakehouse prototype for analyzing Ho Chi Minh City's public bus GPS data using the <strong>Medallion Architecture</strong> (Bronze → Silver → Gold), with <strong>Machine Learning</strong> for travel‑time prediction and <strong>Data Mining</strong> for route inference.
+    A Data Lakehouse prototype for analyzing Ho Chi Minh City's public bus GPS data using the <strong>Medallion Architecture</strong> (Bronze → Silver → Gold).
+    <br/>
+    <strong>Machine Learning</strong> predicts travel time between stations.
+    <br/>
+    <strong>Data Mining</strong> discovers hidden knowledge about traffic congestion and bus bunching.
   </p>
 </p>
 
 ---
 
-## 👥 The Team
+## 👥 The Team — Dreamlite
 
-* **Nguyễn Thành Phát**:  2312593
-* **Trần Đỗ Đức Phát**: 2312596
-* **Nguyễn Miên Phú**: 2312658
+| Name | Student ID |
+|------|-----------|
+| Nguyễn Thành Phát | 2312593 |
+| Trần Đỗ Đức Phát | 2312596 |
+| Nguyễn Miên Phú | 2312658 |
+
+**Instructor (ML):** Huỳnh Văn Thống — **Instructor (DM):** Đỗ Thanh Thái
+
+**University:** Ho Chi Minh City University of Technology (HCMUT) — Vietnam National University
+
 ---
 
 ## 📋 Table of Contents
@@ -23,23 +34,41 @@
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [Pipeline Execution Guide](#pipeline-execution-guide)
-- [Machine Learning Models](#machine-learning-models)
-- [Data Mining](#data-mining)
+- [Machine Learning — Travel Duration Prediction](#machine-learning--travel-duration-prediction)
+- [Data Mining — Traffic Congestion & Bus Bunching Discovery](#data-mining--traffic-congestion--bus-bunching-discovery)
 - [Streamlit Dashboard](#streamlit-dashboard)
 - [Docker Deployment](#docker-deployment)
+- [Testing](#testing)
+- [Changelog](#changelog)
 - [Current Status & Roadmap](#current-status--roadmap)
+- [References](#references)
 
 ---
 
 ## Overview
 
-This project processes **HCMC Bus GPS waypoint data** through a simulated **Data Lakehouse** architecture to:
+This project processes **HCMC Bus GPS waypoint data** (~34 GB raw JSON, 31 bus routes, 50 days of continuous collection) through a simulated **Data Lakehouse** to achieve two distinct academic objectives:
 
-1. **Predict bus travel duration** between stations using regression models (Linear Regression, Random Forest, Gradient Boosting).
-2. **Infer bus routes** from raw GPS traces using FP-Growth frequent pattern mining.
-3. **Visualize insights** through an interactive Streamlit dashboard for management-level (C-level) decision making.
+### 🤖 Machine Learning (CO3117)
+**Goal:** Predict the **travel duration (ETA)** between two consecutive bus stations using supervised regression models.
 
-> **⚠️ Prototype Status:** This is a working prototype that currently processes **static/batch data** stored as Parquet files. The long-term goal is to evolve into a real-time Data Lakehouse with Delta Lake as the storage layer.
+The problem is modeled as:
+
+```
+ETA_duration = f(start_station, end_station, distance, weekend, hour, route_avg_duration)
+```
+
+Three algorithms are trained and compared — Linear Regression (baseline), Random Forest (variance reduction), and Gradient Boosting (bias reduction) — with route-normalized evaluation to ensure fair comparison across short and long segments.
+
+### ⛏️ Data Mining (CO3029)
+**Goal:** Extract **hidden knowledge** from raw GPS traces to solve the "black box" problem in transit operations: automatically discovering traffic congestion hotspots, bus bunching/gapping patterns, and cascade domino effects.
+
+Three data mining techniques are applied:
+1. **FP-Growth** — Frequent itemset mining for route identification (data enrichment step)
+2. **HDBSCAN** — Density-based spatial clustering for traffic black spot detection
+3. **PrefixSpan** — Sequential pattern mining for congestion cascade discovery
+
+> **⚠️ Prototype Status:** This is a working prototype processing **static/batch data** stored as Parquet files. The long-term goal is a real-time Data Lakehouse with Delta Lake.
 
 ---
 
@@ -49,31 +78,37 @@ The project follows the **Medallion Architecture** pattern:
 
 ![Pipeline](images/pipeline.jpg)
 
----
-
 ### Data Flow
 
 | Layer | Description | Storage |
 |-------|------------|---------|
-| **Bronze** | Raw GPS waypoints ingested from JSON files. Stratified sampling with 8 time-bins. | `data/1_bronze/data_raw.parquet` |
-| **Silver** | Cleaned data (drop duplicates, remove unused columns, sort by vehicle/time). Enriched with nearest bus station via **BallTree** spatial query. | `data/2_silver/bus_gps_data.parquet` |
-| **Gold (ML)** | Trajectory compression → station-pair extraction → Haversine distance, speed, duration, temporal features (hour, weekday). | `data/3_gold/ml_gold_data.parquet` |
-| **Gold (DM)** | Trip segmentation with time-gap detection → FP-Growth frequent pattern mining → vehicle-to-route assignment. | `data/3_gold/dm_gold_data.parquet` |
+| **Bronze** | Raw GPS waypoints ingested from 356 JSON chunks. Stratified sampling with 8 time-bins. | `data/1_bronze/data_raw.parquet` |
+| **Silver** | Cleaned data: deduplicated, geo-filtered (HCMC bounding box), enriched with nearest bus station via **BallTree** (Haversine). GPS points >1000m from any station are removed. | `data/2_silver/bus_gps_data.parquet` |
+| **Gold (ML)** | Feature-engineered dataset for regression: trajectory compression → station-pair extraction → Haversine distance, cyclical hour encoding, weekend flag, historical route average duration (with fallback strategy). | `data/3_gold/ml_gold_data.parquet` |
+| **Gold (DM)** | Enriched operational dataset: trip segmentation (1800s gap), FP-Growth route inference, HDBSCAN black spot clustering, bunching/gapping headway analysis. | `data/3_gold/dm_gold_data.parquet` |
 
 ---
 
 ## Dataset
 
-**Source:** `HCMC_BUS_GPS_DATASET_ver_1.pdf` (Ho Chi Minh City Bus GPS Dataset)
+**Source:** [HCMC Bus GPS Dataset](https://www.kaggle.com/datasets/e42c91f126e0df5b66879f9bfcf72d437411e34cf8557bbdbfc446616781ef9c) by Khang Nguyen Duy & Nam Thoai
 
-The dataset consists of GPS waypoint messages from HCMC public buses containing:
+| Property | Value |
+|----------|-------|
+| **Coverage** | 31 representative bus routes across HCMC |
+| **Duration** | 50 continuous days (Mar 20 – May 10, 2025) |
+| **Raw Size** | ~34 GB (356 JSON files) |
+| **Records** | Tens of millions of GPS waypoints |
+
+Each GPS record contains:
 - `vehicle` — bus identifier
 - `x`, `y` — longitude/latitude coordinates
 - `datetime` — UNIX timestamp
-- `speed` — instantaneous speed
-- `door_up`, `door_down`, `sos`, `driver`, `heading`, `aircon`, `working`, `ignition` — additional status fields
+- `speed` — instantaneous speed (km/h)
+- `door_up`, `door_down` — passenger door states
+- `sos`, `driver`, `heading`, `aircon`, `working`, `ignition` — hardware status fields
 
-Supplementary data (bus station locations and routes) is crawled from the EBMS API (`apicms.ebms.vn`).
+Supplementary data (bus station locations and route definitions) is crawled from the EBMS API (`apicms.ebms.vn`).
 
 ---
 
@@ -81,82 +116,84 @@ Supplementary data (bus station locations and routes) is crawled from the EBMS A
 
 | Component | Technology |
 |-----------|-----------|
-| **Compute Engine** | Pandas + NumPy |
-| **Storage Format** | Apache Parquet (PyArrow) — *Delta Lake planned* |
-| **Spatial Query** | scikit-learn BallTree (Haversine) |
-| **Machine Learning** | scikit-learn (Linear Regression, Random Forest, Gradient Boosting) |
-| **Data Mining** | mlxtend (FP-Growth / Apriori), PrefixSpan, HDBSCAN |
-| **Web Crawling** | DrissionPage (Cloudflare bypass) |
-| **Dashboard** | Streamlit + Plotly + Folium |
-| **Orchestration** | Dagster (Software-Defined Assets) |
-| **Containerization** | Docker + Docker Compose (auto-pipeline entrypoint) |
 | **Language** | Python 3.10+ |
+| **Compute & Data** | Pandas, NumPy |
+| **Storage Format** | Apache Parquet (PyArrow) |
+| **Spatial Indexing** | scikit-learn BallTree (Haversine) |
+| **Machine Learning** | scikit-learn (Linear Regression, Random Forest, Gradient Boosting) |
+| **Data Mining** | mlxtend (FP-Growth), PrefixSpan, HDBSCAN |
+| **Dashboard** | Streamlit, Plotly, Folium, Pydeck |
+| **Web Crawling** | DrissionPage (Cloudflare bypass) |
+| **Orchestration** | Dagster (Software-Defined Assets) |
+| **Containerization** | Docker, Docker Compose |
+| **Testing** | PyTest |
+| **Configuration** | YAML (Single Source of Truth for all thresholds) |
 
 ---
 
 ## Project Structure
 
-```
+```text
 Bus-Status-Analysis-Prediction/
 │
-├── data/                               # 🗄️ Data Lake (simulated)
-│   ├── bus_gps/                        # Raw GPS JSON chunks (sub_raw_*.json)
-│   ├── 1_bronze/                       # Raw ingested data
-│   │   ├── data_raw.parquet            #   GPS waypoints merged from JSON chunks
-│   │   └── bus_station.json            #   Crawled bus station data
-│   ├── 2_silver/                       # Cleaned & enriched data
-│   │   ├── bus_gps_data.parquet        #   GPS with nearest station mapped (BallTree)
-│   │   └── bus_station_data.json       #   Cleaned station metadata
-│   ├── 3_gold/                         # Purpose-built analytical datasets
-│   │   ├── ml_gold_data.parquet        #   Features for ML (station pairs, distance, duration)
-│   │   ├── dm_gold_data.parquet        #   Features for DM (trips + inferred routes)
-│   │   └── inferred_route_data.json    #   Route inference map
-│   ├── bunching.parquet                # Bunching/Gapping analysis results
-│   ├── domino_rules.parquet            # Domino cascade rules
-│   └── black_spot.parquet              # Traffic black spot clusters
-│
-├── pipelines/                          # ⚙️ ETL Pipeline Scripts
-│   ├── bronze_pipeline.py              # JSON chunks → Bronze Parquet
-│   ├── crawl_bus_station_pipeline.py   # Web crawler for bus stations (EBMS API)
-│   ├── silver_pipeline.py              # Bronze → Silver (cleaning + BallTree mapping)
-│   ├── ml_gold_pipeline.py             # Silver → Gold ML (feature engineering)
-│   ├── dm_gold_pipeline.py             # Silver → Gold DM (FP-Growth + route inference + black spots)
-│   └── bunching_pipeline.py            # Gold DM → Bunching/Gapping analysis
-│
-├── orchestration/                      # 🔀 Dagster Orchestration
-│   └── assets.py                       # Software-Defined Assets DAG
-│
-├── models/                             # 🧠 Trained ML Models
-│   ├── train_ml_model.py               # Training script (3 algorithms)
-│   ├── randomforest_model.pkl          # Trained Random Forest
-│   ├── gradientboosting_model.pkl      # Trained Gradient Boosting
-│   └── linear_regression_model.pkl     # Trained Linear Regression
-│
-├── app/                                # 📊 Streamlit Dashboard
-│   ├── Dashboard.py                    # Entry point — KPI overview + Driver profiling
-│   ├── helpers.py                      # Shared helper functions
+├── app/                                  # 📊 Streamlit Dashboard
+│   ├── Dashboard.py                      # Entry point — KPI overview, risk trends, driver profiling
+│   ├── helpers.py                        # Shared helper functions
 │   └── pages/
-│       ├── 1_Predict_Duration.py       # ML travel-time prediction
-│       ├── 2_Black_Spot.py             # Traffic black spot map (HDBSCAN)
-│       └── 3_Transit_Performance.py    # Bunching/Gapping performance analysis
+│       ├── 1_predict_duration.py         # ML travel-time prediction interface
+│       ├── 2_Black_Spot.py               # HDBSCAN traffic black spot 3D map
+│       └── 3_Transit_Performance.py      # Bunching/Gapping heatmaps + PrefixSpan domino viz
 │
 ├── config/
-│   └── business_rules.yaml             # Business rule thresholds (KPIs, speed, violations)
+│   └── business_rules.yaml              # ⚙️ SSOT: all spatial, temporal, speed, profiling thresholds
 │
-├── utils/                              # 🔧 Shared utilities
-│   └── config_loader.py                # YAML config loader
+├── data/                                 # 🗄️ Simulated Data Lake
+│   ├── bus_gps/                          # Raw GPS JSON chunks (sub_raw_*.json)
+│   ├── 1_bronze/                         # Bronze layer (raw parquet + crawled station data)
+│   ├── 2_silver/                         # Silver layer (cleaned + BallTree station-mapped)
+│   ├── 3_gold/                           # Gold layer (ML features + DM inferred routes)
+│   ├── bunching.parquet                  # Bunching/Gapping analysis results
+│   ├── domino_rules.parquet              # Domino cascade rules
+│   └── black_spot.parquet                # HDBSCAN traffic black spot clusters
 │
-├── tests/                              # ✅ Unit Tests
+├── docs/                                 # 📝 Technical Reports & Documentation
+│   ├── ML_report.md                      # Full ML report (Vietnamese)
+│   ├── DM_report.md                      # Full DM report (Vietnamese)
+│   ├── architecture.md                   # System architecture documentation
+│   └── ...                               # Pipeline docs, threshold analysis, etc.
 │
-├── notebook/                           # 📓 Jupyter Notebooks (Exploration)
+├── models/                               # 🧠 Trained ML Models
+│   ├── train_ml_model.py                 # Training script (3 algorithms + validation curves)
+│   ├── randomforest_model.pkl            # Deployed model (chosen for stability)
+│   ├── gradientboosting_model.pkl        # Best R² score
+│   └── linear_regression_model.pkl       # Baseline
 │
-├── Dockerfile                          # Python 3.10-slim + auto-pipeline entrypoint
-├── docker-compose.yml                  # Single-service orchestration
-├── entrypoint.sh                       # Auto-pipeline: check assets → run if missing → launch app
-├── .dockerignore                       # Exclude unnecessary files from Docker build
-├── requirements.txt                    # Python dependencies
-├── vehicle_route_mapping.csv           # Vehicle ↔ Route reference mapping
-└── project_structure.md                # Project structure (Vietnamese)
+├── pipelines/                            # 🏗️ ETL & Mining Pipeline Scripts
+│   ├── bronze_pipeline.py                # JSON → Bronze Parquet
+│   ├── crawl_bus_station_pipeline.py     # EBMS API bus station web crawler
+│   ├── silver_pipeline.py                # Bronze → Silver (cleaning + BallTree mapping)
+│   ├── ml_gold_pipeline.py               # Silver → Gold ML (feature engineering for ETA)
+│   ├── dm_gold_pipeline.py               # Silver → Gold DM (FP-Growth route inference + black spots)
+│   ├── bunching_pipeline.py              # Gold DM → Bunching/Gapping + domino cascade analysis
+│   └── prefix_span.py                    # Pre-computed PrefixSpan sequential pattern mining
+│
+├── orchestration/
+│   └── assets.py                         # Dagster Software-Defined Assets DAG
+│
+├── tests/                                # ✅ Unit & Benchmark Tests
+│   ├── test_gold_station_refactor.py     # Gold layer vectorization regression tests
+│   ├── test_map_bus_consistency.py       # BallTree station mapping consistency
+│   ├── test_route_inference.py           # IRF-weighted FP-Growth route inference tests
+│   ├── test_routewise_error.py           # Route-normalized evaluation consistency
+│   ├── test_prefixspan_benchmark.py      # PrefixSpan performance benchmarks
+│   ├── test_silver_transform.py          # Silver transform unit tests
+│   └── benchmark_route_inference.py      # Route inference accuracy benchmarks
+│
+├── Dockerfile                            # Python 3.10-slim + auto-pipeline entrypoint
+├── docker-compose.yml                    # Single-service orchestration with volume mount
+├── entrypoint.sh                         # Smart startup: check 13 assets → run missing stages → launch app
+├── requirements.txt                      # Python dependencies
+└── vehicle_route_mapping.csv             # Ground-truth vehicle ↔ route reference mapping
 ```
 
 ---
@@ -166,34 +203,32 @@ Bus-Status-Analysis-Prediction/
 ### Prerequisites
 
 - **Python 3.10+**
-- **pip** or **Docker**
+- **pip** (or **Docker** for containerized deployment)
 
-### Local Installation
+### 1. Clone & Setup
 
 ```bash
 # Clone the repository
 git clone https://github.com/ZanissNguyen/Bus-Status-Analysis-Prediction.git
 cd Bus-Status-Analysis-Prediction
 
-# Create virtual environment
+# Create and activate virtual environment
 python -m venv venv
 
-# Activate (Windows)
+# Windows
 .\venv\Scripts\activate
 
-# Activate (Linux/Mac)
+# Linux/Mac
 source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### Data Setup
+### 2. Data Setup
 
-1. **Download the Dataset:** Download the HCMC Bus GPS dataset from [Kaggle](https://www.kaggle.com/datasets/e42c91f126e0df5b66879f9bfcf72d437411e34cf8557bbdbfc446616781ef9c).
-2. **Extract & Move:** Extract all files with the prefix `sub_raw_` (e.g., `sub_raw_104.json`, `sub_raw_105.json`, etc.) and move them into the `data/bus_gps/` directory.
-
----
+1. **Download the Dataset** from [Kaggle](https://www.kaggle.com/datasets/e42c91f126e0df5b66879f9bfcf72d437411e34cf8557bbdbfc446616781ef9c).
+2. **Extract** all `sub_raw_*.json` files into `data/bus_gps/`.
 
 ---
 
@@ -202,47 +237,55 @@ pip install -r requirements.txt
 Run the pipelines **in order** — each layer depends on the previous one:
 
 ```bash
-# Step 1: Ingest raw GPS JSON files → Bronze layer (Parquet)
+# Step 1: Ingest raw GPS JSON files → Bronze Parquet
 python -m pipelines.bronze_pipeline
 
 # Step 1b (Optional): Crawl bus station data from EBMS API
 python -m pipelines.crawl_bus_station_pipeline
 
-# Step 2: Clean & enrich Bronze → Silver layer
+# Step 2: Clean & enrich Bronze → Silver (BallTree station mapping)
 python -m pipelines.silver_pipeline
 
 # Step 3a: Feature engineering for ML (Silver → Gold)
 python -m pipelines.ml_gold_pipeline
 
-# Step 3b: Trip segmentation + Route inference + Black Spots (Silver → Gold)
+# Step 3b: Route inference + Black Spot detection (Silver → Gold)
 python -m pipelines.dm_gold_pipeline
 
 # Step 4: Train ML models on Gold data
 python -m models.train_ml_model
 
-# Step 5: Bunching/Gapping analysis
+# Step 5: Bunching/Gapping analysis + Domino cascade rules
 python -m pipelines.bunching_pipeline
-```
 
-> **💡 Tip:** When using Docker, the pipeline runs **automatically** if any output assets are missing. See [Docker Deployment](#docker-deployment) for details.
+# Step 6 (Optional): Pre-compute PrefixSpan sequential patterns
+python -m pipelines.prefix_span
+```
 
 ### Pipeline Details
 
-| Step | Script | Input | Output | Key Operations |
-|------|--------|-------|--------|----------------|
-| 1 | `bronze_pipeline.py` | `data/bus_gps/*.json` | `data/1_bronze/data_raw.parquet` | JSON parsing, stratified sampling (8 time-bins) |
-| 1b | `crawl_bus_station_pipeline.py` | EBMS API | `data/1_bronze/bus_station.json` | Cloudflare bypass, station metadata extraction |
-| 2 | `silver_pipeline.py` | Bronze parquet + station JSON | `data/2_silver/` | Drop dupes, remove unused cols, BallTree nearest-station mapping |
-| 3a | `ml_gold_pipeline.py` | Silver parquet | `data/3_gold/ml_gold_data.parquet` | Trajectory compression, station-pair generation, Haversine distance, speed calculation |
-| 3b | `dm_gold_pipeline.py` | Silver parquet + station JSON | `data/3_gold/dm_gold_data.parquet` | Time-gap trip segmentation, FP-Growth mining, vehicle-route assignment, black spot detection |
-| 4 | `train_ml_model.py` | Gold ML parquet | `models/*.pkl` | Feature engineering (cyclic hour, weekend flag, route avg), train 3 models |
-| 5 | `bunching_pipeline.py` | Gold DM parquet | `data/bunching.parquet`, `data/domino_rules.parquet` | Headway analysis, bunching/gapping detection, domino cascade rules |
+| Step | Script | Input → Output | Key Operations |
+|------|--------|---------------|----------------|
+| 1 | `bronze_pipeline.py` | JSON chunks → `data_raw.parquet` | JSON parsing, stratified sampling (8 time-bins) |
+| 1b | `crawl_bus_station_pipeline.py` | EBMS API → `bus_station.json` | Cloudflare bypass, station metadata extraction |
+| 2 | `silver_pipeline.py` | Bronze → Silver | Deduplication, geo-filtering, BallTree nearest-station mapping |
+| 3a | `ml_gold_pipeline.py` | Silver → Gold ML | Trajectory compression, station pairs, Haversine distance, cyclical time encoding |
+| 3b | `dm_gold_pipeline.py` | Silver → Gold DM | Trip segmentation (1800s gap), FP-Growth route inference, HDBSCAN black spots |
+| 4 | `train_ml_model.py` | Gold ML → `.pkl` models | Train 3 models, validation curves, hyperparameter selection |
+| 5 | `bunching_pipeline.py` | Gold DM → Analysis | Headway analysis, bunching/gapping detection, domino cascade extraction |
+| 6 | `prefix_span.py` | Gold DM → Sequences | Pre-computed PrefixSpan congestion cascade patterns |
 
 ---
 
-## Machine Learning Models
+## Machine Learning — Travel Duration Prediction
 
-**Task:** Predict bus **travel duration (seconds)** between two consecutive stations.
+**Course:** CO3117 — Machine Learning | **Full Report:** [`docs/ML_report.md`](docs/ML_report.md)
+
+### Problem Formulation
+
+The project solves an **ETA (Estimated Time of Arrival)** problem — predicting bus travel duration between station A and station B using supervised regression:
+
+$$ETA\_duration = f(start\_station, end\_station, distance, weekend, hour, route\_avg\_duration)$$
 
 ### Features
 
@@ -251,95 +294,149 @@ python -m pipelines.bunching_pipeline
 | `start station` | Categorical | Departure station name |
 | `end station` | Categorical | Arrival station name |
 | `distance (m)` | Numeric | Haversine distance between stations |
-| `hour_sin`, `hour_cos` | Numeric | Cyclical encoding of departure hour |
+| `hour_sin`, `hour_cos` | Numeric | Cyclical encoding of departure hour (preserves continuity between 23h and 0h) |
 | `weekend` | Binary | Weekend flag (Sat/Sun = 1) |
-| `route_avg_duration` | Numeric | Historical average duration for this station pair |
+| `route_avg_duration` | Numeric | Historical average duration for the route (computed on train set only, with fallback: route → start station → end station → global average) |
 
-### Models Trained
+### Data Characteristics
 
-| Model | Encoding | Scaling | Key Hyperparameters |
-|-------|----------|---------|---------------------|
-| **Linear Regression** | OneHotEncoder | StandardScaler | — |
-| **Random Forest** | OrdinalEncoder | Passthrough | `n_estimators=50, max_depth=12, min_samples_leaf=5` |
-| **Gradient Boosting** | OneHotEncoder | Passthrough | `n_estimators=300, learning_rate=0.05, max_depth=3` |
+The dataset has three key properties that shape model selection:
+1. **Real-world noise** — GPS hardware artifacts and missing data create outlier trips
+2. **Semi-Temporal** — Not a pure time-series; each sample is an independent trip, but temporal features (hour, weekday) encode traffic patterns (peak hours, weekends)
+3. **Near-Linear Physics** — `duration ≈ distance / avg_speed` is roughly linear, but real conditions (traffic density, time of day, route characteristics) add nonlinear corrections
 
-### Evaluation Metrics
+### Models & Results
 
-Models are evaluated with: **MAE**, **RMSE**, and **R² Score** on a 80/20 train-test split.
+Hyperparameters are selected via **validation curves** (model complexity vs. error):
+
+| Model | Encoding | Scaling | Hyperparameters | MAE | RMSE | R² |
+|-------|----------|---------|-----------------|-----|------|----|
+| **Linear Regression** | OneHotEncoder | StandardScaler | — | 0.2874 | 0.3460 | 0.6324 |
+| **Random Forest** | OrdinalEncoder | Passthrough | `n_estimators=40`, `max_depth=12` | **0.2789** | 0.3525 | 0.6519 |
+| **Gradient Boosting** | OneHotEncoder | Passthrough | `n_estimators=150`, `learning_rate=0.05` | 0.2818 | **0.3389** | **0.6598** |
+
+> **Note:** MAE and RMSE are **route-normalized** — computed per route, then normalized and averaged — ensuring short and long routes contribute equally to the evaluation.
+
+### Key Findings
+
+- **Random Forest** was selected for deployment due to its prediction **stability** (lowest MAE, variance reduction via independent tree averaging), which optimizes user experience.
+- The performance gap between all three models is small (~0.02 R²), indicating the **current limitation is data quality and feature completeness**, not model complexity.
+- **R² ≈ 60%** suggests significant unexplained variance from missing features: weather, real-time traffic density, traffic signals, upstream congestion — none captured in the current GPS-only dataset.
 
 ---
 
-## Data Mining
+## Data Mining — Traffic Congestion & Bus Bunching Discovery
 
-**Task:** Infer which **bus route** each vehicle operates on, using only GPS traces (no ground-truth route labels).
+**Course:** CO3029 — Data Mining | **Full Report:** [`docs/DM_report.md`](docs/DM_report.md)
 
-### Approach
+The core objective of the data mining component is to solve the **"black box" problem** in transit operations: transforming passive GPS coordinate monitoring into actionable knowledge about **where** congestion concentrates, **how** it spreads, and **when** service quality degrades.
 
-1. **Trip Segmentation** — GPS points grouped into trips using a configurable time-gap threshold (default: 70 min). A new trip starts when the gap between consecutive points exceeds the threshold.
+### 1. Route Identification — FP-Growth (Data Enrichment)
 
-2. **Station Filtering** — Only GPS points within **20m** of a known bus station are retained. Consecutive duplicates at the same station are compressed.
+Since many buses dynamically switch routes throughout the day, the system cannot rely on static schedules. **FP-Growth frequent itemset mining** is used as a preprocessing/enrichment step to infer which route a vehicle is operating at any given time.
 
-3. **FP-Growth Mining** — For each vehicle, the set of station visits across all trips is encoded as transactions. FP-Growth extracts the most frequent itemset (core stations).
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `min_support` | 0.6 | Station set must appear in ≥60% of a vehicle's trips |
+| Method | Majority voting against route dictionary | Cross-reference frequent stations with known route definitions |
 
-4. **Route Matching** — Core stations are cross-referenced with a station↔route lookup table. The route with the highest frequency count is assigned to the vehicle.
+**Why FP-Growth over Apriori?** With tens of thousands of trips and hundreds of stations, Apriori's candidate generation causes combinatorial explosion. FP-Growth compresses all data into an FP-Tree with only 2 database scans (count frequencies → build tree), eliminating the bottleneck entirely.
 
-### Threshold Tuning
+### 2. Traffic Black Spot Detection — HDBSCAN
 
-The `pipelines/utils.py` module provides a **grid search** over trip-segmentation thresholds (15, 30, 45, 60, 90 min) to find the optimal balance between assigned vehicle count and core station quality.
+Automatically identifies and delineates zones of recurring traffic congestion.
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `min_cluster_size` | 50 | At least 50 congestion GPS events must converge to form a black spot |
+| Distance metric | Euclidean (on equirectangular-projected coordinates) | Enables BallTree acceleration → O(n log n) complexity |
+
+**Why HDBSCAN over K-Means or DBSCAN?**
+- **K-Means** requires specifying K upfront and assumes spherical clusters — congestion zones are elongated along road segments
+- **DBSCAN** requires a fixed radius ε — impossible for HCMC's heterogeneous density (central vs. suburban)
+- **HDBSCAN** builds a hierarchical density tree, adapts to varying densities, and automatically separates noise
+
+**Key Discoveries:** Black spots concentrate near institutional hubs (universities, hospitals, metro stations, industrial zones) and at narrow roads absorbing overflow from main arteries. Many congestion zones extend linearly along road segments rather than forming point clusters.
+
+### 3. Congestion Cascade Discovery — PrefixSpan
+
+Goes beyond isolated black spots to discover **how congestion spreads** from one area to another over time (spatial domino effect).
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `min_support` | 20 | Pattern must repeat ≥20 times in history (filters out random accidents) |
+| Spatial discretization | 3 decimal places (lat/lng) | Creates zone-level grid IDs |
+
+**How it works:** Each vehicle's congestion events in a day are ordered chronologically to form a sequence of zone IDs. PrefixSpan mines recurring subsequences — revealing that congestion typically originates at bus terminal gates (e.g., An Sương, Phổ Quang terminals) and propagates in reverse traffic flow toward nearby central intersections during peak hours.
+
+### 4. Bus Bunching & Gapping — Consecutive State Chain Analysis
+
+Analyzes headway intervals between consecutive buses on the same route to detect:
+
+| Phenomenon | Threshold | Description |
+|------------|-----------|-------------|
+| **Bunching** | Headway < 2 min | Multiple buses arrive simultaneously — wasted capacity |
+| **Gapping** | Headway > 30 min | Excessive wait time for passengers |
+| **Bottleneck** | Dwell time > 3 min | Station congestion blocking throughput |
+
+**Key Discovery — The Domino Effect:** When a central station experiences a bottleneck lasting >3 minutes, it causes **gapping at the next 2–3 downstream stations** (no buses arrive). When the bottleneck clears, the accumulated buses rush forward simultaneously, creating **bunching at upstream stations**. This bunching → gapping → bunching cascade is the primary mechanism of service degradation.
 
 ---
 
 ## Streamlit Dashboard
 
-The interactive dashboard provides C-level operational insights across **4 views**:
-
-### 📊 Operational Dashboard (`Dashboard.py`)
-- **5 KPI Cards:** Service health %, Bunching+Gapping %, Trip count, Avg headway, Safe driver %
-- **Operational Risk Trends:** Stacked bar chart of bottleneck/bunching/gapping by hour
-- **Network Performance:** Speed trends and station dwell time analysis
-- **Deep-Dive Tabs:** Route rankings, station-pair speed heatmap, station error table, driver profiling
-- **Global Filters:** Multi-route and date range filtering
-
-### 🤖 Predict Duration (`1_Predict_Duration.py`)
-- Input form for departure details and distance
-- Predicts travel duration using trained ML models (RF, GB, LR)
-- Fallback formula when no `.pkl` model is available
-
-### 🔴 Black Spot Map (`2_Black_Spot.py`)
-- Interactive Folium map of traffic black spots
-- HDBSCAN clustering to identify dangerous zones
-- Drill-down by route and area
-
-### 🚌 Transit Performance (`3_Transit_Performance.py`)
-- Bunching/Gapping analysis per route and station
-- Service reliability metrics and trends
-- Domino cascade rule visualization
-
-### Running the Dashboard
+The dashboard translates all mining results into an **interactive decision support system** for transit managers. It follows a drill-down design: overview KPIs → route-level analysis → station-level investigation.
 
 ```bash
 streamlit run app/Dashboard.py
+# Open http://localhost:8501
 ```
 
-The dashboard will be available at `http://localhost:8501`.
+### 📊 Page 1: Operational Dashboard (`Dashboard.py`)
+- **5 KPI Cards:** Service health %, Bunching+Gapping %, Trip count, Avg headway, Safe driver %
+- **Operational Risk Trends:** Stacked bar chart of bottleneck/bunching/gapping by hour
+- **Network Performance:** Speed trends and station dwell time analysis
+- **Deep-Dive Tabs:** Route rankings (Bad Score = Bottleneck% + Bunching% + Gapping%), station-pair speed heatmap, driver profiling (Safe / Violator / Speedster / Reckless via hard-rule classification)
+- **Global Filters:** Multi-route and date range filtering
+
+### 🤖 Page 2: Predict Duration (`1_predict_duration.py`)
+- Input form for departure/arrival station, distance, time of day
+- Predicts travel duration using the deployed Random Forest model (with Gradient Boosting and Linear Regression for comparison)
+- Fallback formula when no `.pkl` model is available
+
+### 🔴 Page 3: Black Spot Map (`2_Black_Spot.py`)
+- Interactive 3D Folium/Plotly map with HexagonLayer for congestion density
+- HDBSCAN cluster centroids with severity scoring
+- Drill-down by route, time window, and area
+
+### 🚌 Page 4: Transit Performance (`3_Transit_Performance.py`)
+- Bunching/Gapping heatmaps per route, station, and hour
+- PrefixSpan domino cascade arc-map visualization
+- Domino chain rule table (stations involved, propagation direction, frequency)
+
+### 🎯 Decision-Making Workflow Example
+
+The DM report includes a full case study for Route 91 that demonstrates the drill-down:
+1. **Identify** — Route 91 flagged with highest Bad Score on the ranking table
+2. **Diagnose** — Bunching heatmap reveals "Lăng Ông Bà Chiểu" station at 07:00–08:00; Gapping appears at downstream stations 30 minutes later
+3. **Verify** — Black Spot 3D map confirms physical traffic congestion at "Đền Trần Hưng Đạo" intersection (infrastructure issue, not driver error)
+4. **Contextualize** — Driver profiling shows elevated Violator rates on Route 91 (forced door-opening in traffic), not genuine misconduct
+5. **Act** — Short-term: use PrefixSpan cascade rules for proactive dispatching when upstream congestion is detected. Long-term: recommend station relocation 100m from intersection.
 
 ---
 
 ## Docker Deployment
 
-The Docker setup features **automatic pipeline execution** — when you run the container, it checks if all processed data assets exist. If any are missing, the pipeline runs automatically before launching the dashboard.
+The Docker setup features **smart auto-pipeline execution**. On startup, `entrypoint.sh` checks **13 critical asset files** across the data pipeline. If any are missing, only the required pipeline stages run automatically before launching the dashboard.
 
 ```bash
-# Build and start (first run: pipeline auto-executes, subsequent runs: instant)
+# Build and start
 docker-compose up --build
 
-# Access the dashboard
-# http://localhost:8501
+# Access the dashboard at http://localhost:8501
 ```
 
 ### How It Works
-
-The `entrypoint.sh` script checks **13 critical asset files** across the data pipeline:
 
 | Category | Assets Checked |
 |----------|----------------|
@@ -349,11 +446,67 @@ The `entrypoint.sh` script checks **13 critical asset files** across the data pi
 | Analysis | `bunching.parquet`, `domino_rules.parquet`, `black_spot.parquet` |
 | Models | `randomforest_model.pkl`, `gradientboosting_model.pkl`, `linear_regression_model.pkl` |
 
-- **If ALL assets exist** → Pipeline is skipped, Streamlit launches immediately
-- **If ANY asset is missing** → Only the required pipeline stages run (each stage is independently skippable)
-- **Data persists** on host disk via volume mount (`.:/app`), so assets survive container restarts
+- **All assets exist** → Pipeline skipped, Streamlit launches immediately
+- **Any asset missing** → Only required stages run (each independently skippable)
+- **Data persists** on host disk via volume mount (`.:/app`)
 
-> **⚠️ Note:** The crawl pipeline (`crawl_bus_station_pipeline.py`) requires a Chromium browser via DrissionPage, which cannot run inside the Docker container. Make sure `data/1_bronze/bus_station.json` is present before building.
+> **⚠️ Note:** The crawl pipeline (`crawl_bus_station_pipeline.py`) requires Chromium via DrissionPage, which cannot run inside Docker. Ensure `data/1_bronze/bus_station.json` exists before building.
+
+---
+
+## Testing
+
+```bash
+# Activate virtual environment first
+.\venv\Scripts\activate  # Windows
+source venv/bin/activate  # Linux/Mac
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run specific test suites
+python -m pytest tests/test_route_inference.py -v       # FP-Growth route inference
+python -m pytest tests/test_gold_station_refactor.py -v  # Gold layer vectorization
+python -m pytest tests/test_routewise_error.py -v        # Route-normalized evaluation
+python -m pytest tests/test_prefixspan_benchmark.py -v   # PrefixSpan performance
+python -m pytest tests/benchmark_route_inference.py -v   # Route inference accuracy
+```
+
+### Test Coverage
+
+| Test File | What It Validates |
+|-----------|-------------------|
+| `test_route_inference.py` | IRF-weighted FP-Growth route inference accuracy on overlapping routes |
+| `test_gold_station_refactor.py` | Vectorized Gold pipeline consistency vs. original loop-based logic |
+| `test_map_bus_consistency.py` | BallTree station mapping produces consistent results |
+| `test_routewise_error.py` | Route-normalized MAE/RMSE evaluation correctness |
+| `test_prefixspan_benchmark.py` | PrefixSpan pre-computed vs. on-the-fly result consistency |
+| `test_silver_transform.py` | Silver layer data cleaning transforms |
+| `benchmark_route_inference.py` | End-to-end route inference accuracy benchmarks |
+
+---
+
+## Changelog
+
+### Latest (April 2026)
+- **PrefixSpan Pre-computation Pipeline** — Migrated PrefixSpan from on-the-fly Streamlit computation to a batch pre-computed pipeline (`prefix_span.py`), resolving dashboard rendering bottlenecks on 933k+ GPS records
+- **IRF-Weighted FP-Growth** — Replaced naive majority voting with Inverse Route Frequency (IRF)-weighted FP-Growth for route inference, fixing overlapping route ambiguities on dense corridors (e.g., Điện Biên Phủ)
+- **Dynamic Drift Detection** — Added `overlap_ratio` moving memory pool in `dm_gold_pipeline.py` to handle mid-trip route changes without disrupting trip segmentation
+- **Vectorized Gold Pipeline** — Refactored `routewise_normalized_error` and `map_bus_to_station` from loop-based to vectorized Pandas operations for significant speedup
+- **Comprehensive Test Suite** — Added PyTest-based regression tests for route inference, Gold layer refactoring, PrefixSpan benchmarks, and route-normalized evaluation
+- **Business Rules YAML** — Centralized all operational thresholds into a single `config/business_rules.yaml` (SSOT)
+- **Dagster Integration** — Added Software-Defined Assets DAG for pipeline orchestration
+
+### Prior
+- Docker auto-pipeline deployment with smart asset checking (entrypoint.sh)
+- HDBSCAN black spot clustering implementation
+- Bunching/Gapping analysis with domino cascade extraction
+- Streamlit Dashboard (4 pages: KPIs, ML Prediction, Black Spot Map, Transit Performance)
+- Driver profiling with hard-rule classification (Safe/Violator/Speedster/Reckless)
+- ML model training pipeline with validation curve hyperparameter selection
+- BallTree spatial indexing for GPS-to-station mapping
+- Bronze → Silver → Gold Medallion ETL pipeline
+- EBMS API bus station web crawler (DrissionPage + Cloudflare bypass)
 
 ---
 
@@ -363,28 +516,41 @@ The `entrypoint.sh` script checks **13 critical asset files** across the data pi
 
 - [x] Bronze → Silver → Gold ETL pipeline (Medallion Architecture)
 - [x] Bus station data web crawler (EBMS API + Cloudflare bypass)
-- [x] BallTree spatial indexing for GPS-to-station mapping
-- [x] ML feature engineering (trajectory compression, station pairs, temporal features)
-- [x] Travel duration prediction with 3 regression models
-- [x] FP-Growth route inference from GPS traces
-- [x] Trip segmentation with configurable time-gap threshold
-- [x] Bunching/Gapping analysis with domino cascade rules
-- [x] Traffic black spot detection (HDBSCAN clustering)
+- [x] BallTree spatial indexing (Haversine) for GPS-to-station mapping
+- [x] ML feature engineering with data leakage prevention (train-only historical features + fallback)
+- [x] Travel duration prediction with 3 regression models (LR, RF, GB) + route-normalized evaluation
+- [x] FP-Growth route inference with IRF weighting + dynamic drift detection
+- [x] HDBSCAN traffic black spot clustering and severity scoring
+- [x] PrefixSpan congestion cascade sequential pattern mining (batch pre-computed)
+- [x] Bunching/Gapping headway analysis with domino cascade rule extraction
+- [x] Driver profiling (Safe / Violator / Speedster / Reckless) via hard-rule classification
+- [x] Streamlit Dashboard (4 pages: KPIs, ML Prediction, Black Spot Map, Transit Performance)
+- [x] Configurable business rules via `config/business_rules.yaml` (SSOT)
 - [x] Dagster orchestration (Software-Defined Assets DAG)
-- [x] Streamlit Operational Dashboard (4 pages: KPI, Prediction, Black Spot, Transit Performance)
-- [x] Driver profiling with hard-rule classification (Safe/Violator/Speedster/Reckless)
-- [x] Configurable business rules via `config/business_rules.yaml`
-- [x] Docker auto-pipeline deployment (entrypoint checks assets → runs pipeline if missing)
-- [x] Unit tests for Gold layer refactoring
+- [x] Docker auto-pipeline deployment (smart entrypoint with 13-asset check)
+- [x] Comprehensive PyTest test suite (route inference, vectorization, PrefixSpan benchmarks)
 
 ### 🗺️ Future Roadmap
 
-- [ ] **Delta Lake integration** — Replace Parquet files with Delta tables for ACID transactions and time-travel
-- [ ] **Real-time data ingestion** — Stream GPS data instead of batch processing static files
-- [ ] **Real Data Lakehouse** — Upgrade architecture with proper storage layer (Delta Lake / Apache Iceberg)
-- [ ] **Advanced ML models** — Explore deep learning (LSTM/Transformer) for sequence-based prediction
-- [ ] **Route optimization** — Leverage data mining insights for route planning recommendations
-- [ ] **API layer** — Add REST/GraphQL API for external consumption
+- [ ] **Delta Lake Integration** — Replace Parquet files with Delta tables for ACID transactions and time-travel
+- [ ] **Real-time Streaming** — Migrate from batch processing to stream processing (e.g., Apache Kafka) for live dashboard updates
+- [ ] **Multi-source Data Enrichment** — Integrate weather data, event calendars, and traffic camera feeds to explain currently unexplained variance (R² ≈ 60%)
+- [ ] **Temporal Modeling** — Add sliding window features or LSTM-based sequence models to capture time-dependent traffic patterns
+- [ ] **Network Graph Modeling** — Replace OneHotEncoding of stations with spatial embeddings or Graph Neural Networks to capture inter-station relationships
+- [ ] **Online/Adaptive Learning** — Build periodic model update mechanisms to maintain prediction accuracy as traffic conditions evolve
+
+---
+
+## References
+
+1. Breiman, L. (2001). Random Forests. *Machine Learning*, 45(1), 5–32.
+2. Nguyen Duy, K. & Thoai, N. (2025). [Ho Chi Minh City Bus GPS Dataset](https://www.kaggle.com/datasets/e42c91f126e0df5b66879f9bfcf72d437411e34cf8557bbdbfc446616781ef9c). Kaggle.
+3. Friedman, J. H. (2001). Greedy Function Approximation: A Gradient Boosting Machine. *Annals of Statistics*.
+4. Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. *JMLR*, 12, 2825–2830.
+5. Raschka, S. (2018). MLxtend: Machine Learning Extensions. *JOSS*, 3(24), 638.
+6. McInnes, L., Healy, J., & Astels, S. (2017). HDBSCAN: Hierarchical Density Based Clustering. *JOSS*, 2(11), 205.
+7. Gao, C. PrefixSpan. [PyPI](https://pypi.org/project/prefixspan/).
+8. Wikipedia. [Bus Bunching](https://en.wikipedia.org/wiki/Bus_bunching).
 
 ---
 
